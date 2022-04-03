@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net"
 	"time"
+
+	"swim/bufchan"
 )
 
 const (
@@ -11,10 +13,16 @@ const (
 	pingTimeout = 200 * time.Millisecond
 )
 
+type Update struct {
+	Addr     net.Addr
+	IsMember bool
+}
+
 type Driver struct {
 	s     *stateMachine
 	addrs map[id]net.Addr
 	conn  net.PacketConn
+	ch    bufchan.Chan[Update]
 }
 
 func Open() (*Driver, error) {
@@ -26,6 +34,7 @@ func Open() (*Driver, error) {
 		s:     newStateMachine(),
 		conn:  conn,
 		addrs: make(map[id]net.Addr),
+		ch:    bufchan.Make[Update](),
 	}
 	go d.runReceive()
 	go d.runTick()
@@ -40,7 +49,16 @@ func (d *Driver) runTick() {
 		select {
 		case <-ticker.C:
 			pingTimer.Reset(pingTimeout)
-			d.send(d.s.tick()...)
+			for _, p := range d.s.tick() {
+				// Packets may contain newly generated failed messages
+				for _, m := range p.Msgs {
+					if m.typ == failed {
+						d.ch.Send() <- Update{d.addrs[m.id], false}
+						delete(d.addrs, m.id)
+					}
+				}
+				d.send(p)
+			}
 		case <-pingTimer.C:
 			d.send(d.s.timeout()...)
 		}
@@ -85,16 +103,31 @@ func (d *Driver) runReceive() {
 		if !ok {
 			continue
 		}
-		d.addrs[p.remoteID] = addr
+		if d.addrs[p.remoteID] == nil {
+			// First contact from sender
+			d.addrs[p.remoteID] = addr
+			d.ch.Send() <- Update{addr, true}
+		}
 		for i, m := range p.Msgs {
-			if addrs[i] == nil {
-				d.addrs[m.id] = addr
-			} else {
+			switch {
+			case m.id == d.s.id:
+				if m.typ == failed {
+					return
+				}
+			case m.typ == failed && d.addrs[m.id] != nil:
+				d.ch.Send() <- Update{d.addrs[m.id], false}
+				delete(d.addrs, m.id)
+			case m.typ != failed && d.addrs[m.id] == nil:
 				d.addrs[m.id] = addrs[i]
+				d.ch.Send() <- Update{d.addrs[m.id], true}
 			}
 		}
 		d.send(d.s.receive(p)...)
 	}
+}
+
+func (d *Driver) Updates() <-chan Update {
+	return d.ch.Receive()
 }
 
 func (d *Driver) LocalAddr() net.Addr {
