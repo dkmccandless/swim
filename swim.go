@@ -13,8 +13,8 @@ const (
 
 type Driver struct {
 	s     *stateMachine
-	conn  net.PacketConn
 	addrs map[id]net.Addr
+	conn  net.PacketConn
 }
 
 func Open() (*Driver, error) {
@@ -52,7 +52,7 @@ func (d *Driver) SendHello(addr net.Addr) {
 		Type: ping,
 		Msgs: []*message{d.s.aliveMessage()},
 	}
-	b := d.encode(p)
+	b := d.encode(p, []net.Addr{nil})
 	if _, err := d.conn.WriteTo(b, addr); err != nil {
 		// TODO: better error handling
 		panic(err)
@@ -61,9 +61,12 @@ func (d *Driver) SendHello(addr net.Addr) {
 
 func (d *Driver) send(ps ...packet) {
 	for _, p := range ps {
-		addr := d.addrs[p.remoteID]
-		b := d.encode(p)
-		if _, err := d.conn.WriteTo(b, addr); err != nil {
+		addrs := make([]net.Addr, len(p.Msgs))
+		for i, m := range p.Msgs {
+			addrs[i] = d.addrs[m.id]
+		}
+		b := d.encode(p, addrs)
+		if _, err := d.conn.WriteTo(b, d.addrs[p.remoteID]); err != nil {
 			// TODO: better error handling
 			panic(err)
 		}
@@ -78,11 +81,18 @@ func (d *Driver) runReceive() {
 			time.Sleep(time.Second)
 			continue
 		}
-		p, ok := d.decode(b[:n])
+		p, addrs, ok := d.decode(b[:n])
 		if !ok {
 			continue
 		}
 		d.addrs[p.remoteID] = addr
+		for i, m := range p.Msgs {
+			if addrs[i] == nil {
+				d.addrs[m.id] = addr
+			} else {
+				d.addrs[m.id] = addrs[i]
+			}
+		}
 		d.send(d.s.receive(p)...)
 	}
 }
@@ -94,21 +104,22 @@ func (d *Driver) LocalAddr() net.Addr {
 type envelope struct {
 	FromID id
 	P      packet
+	Addrs  []net.Addr
 }
 
-func (d *Driver) encode(p packet) []byte {
-	b, err := json.Marshal(envelope{d.s.id, p})
+func (d *Driver) encode(p packet, addrs []net.Addr) []byte {
+	b, err := json.Marshal(envelope{d.s.id, p, addrs})
 	if err != nil {
 		panic(err)
 	}
 	return b
 }
 
-func (d *Driver) decode(b []byte) (packet, bool) {
+func (d *Driver) decode(b []byte) (packet, []net.Addr, bool) {
 	var e envelope
 	err := json.Unmarshal(b, &e)
 	e.P.remoteID = e.FromID
-	return e.P, err == nil
+	return e.P, e.Addrs, err == nil
 }
 
 func stoppedTimer() *time.Timer {
