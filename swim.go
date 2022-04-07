@@ -15,12 +15,14 @@ const (
 
 type Update struct {
 	Addr     net.Addr
+	ID       string
 	IsMember bool
 }
 
 type Driver struct {
 	s     *stateMachine
 	addrs map[id]net.Addr
+	id    id // copy of s.id
 	conn  net.PacketConn
 	ch    bufchan.Chan[Update]
 }
@@ -30,10 +32,12 @@ func Open() (*Driver, error) {
 	if err != nil {
 		return nil, err
 	}
+	s := newStateMachine()
 	d := &Driver{
-		s:     newStateMachine(),
-		conn:  conn,
+		s:     s,
 		addrs: make(map[id]net.Addr),
+		id:    s.id,
+		conn:  conn,
 		ch:    bufchan.Make[Update](),
 	}
 	go d.runReceive()
@@ -49,16 +53,14 @@ func (d *Driver) runTick() {
 		select {
 		case <-ticker.C:
 			pingTimer.Reset(pingTimeout)
-			for _, p := range d.s.tick() {
-				// Packets may contain newly generated failed messages
-				for _, m := range p.Msgs {
-					if m.typ == failed {
-						d.ch.Send() <- Update{d.addrs[m.id], false}
-						delete(d.addrs, m.id)
-					}
-				}
-				d.send(p)
+			ps, us := d.s.tick()
+			for _, u := range us {
+				id := id(u.ID)
+				u.Addr = d.addrs[id]
+				delete(d.addrs, id)
+				d.ch.Send() <- u
 			}
+			d.send(ps...)
 		case <-pingTimer.C:
 			d.send(d.s.timeout()...)
 		}
@@ -106,28 +108,36 @@ func (d *Driver) runReceive() {
 		if d.addrs[p.remoteID] == nil {
 			// First contact from sender
 			d.addrs[p.remoteID] = addr
-			d.ch.Send() <- Update{addr, true}
+			d.ch.Send() <- Update{addr, string(p.remoteID), true}
 		}
-		for i, m := range p.Msgs {
-			switch {
-			case m.id == d.s.id:
-				if m.typ == failed {
-					return
-				}
-			case m.typ == failed && d.addrs[m.id] != nil:
-				d.ch.Send() <- Update{d.addrs[m.id], false}
-				delete(d.addrs, m.id)
-			case m.typ != failed && d.addrs[m.id] == nil:
-				d.addrs[m.id] = addrs[i]
-				d.ch.Send() <- Update{d.addrs[m.id], true}
+		// Update address records
+		for i, addr := range addrs {
+			id := p.Msgs[i].id
+			if id == d.id || addr == nil {
+				continue
 			}
+			d.addrs[id] = addr
 		}
-		d.send(d.s.receive(p)...)
+
+		ps, us := d.s.receive(p)
+		for _, u := range us {
+			id := id(u.ID)
+			u.Addr = d.addrs[id]
+			if !u.IsMember {
+				delete(d.addrs, id)
+			}
+			d.ch.Send() <- u
+		}
+		d.send(ps...)
 	}
 }
 
 func (d *Driver) Updates() <-chan Update {
 	return d.ch.Receive()
+}
+
+func (d *Driver) ID() string {
+	return string(d.id)
 }
 
 func (d *Driver) LocalAddr() net.Addr {
@@ -141,7 +151,7 @@ type envelope struct {
 }
 
 func (d *Driver) encode(p packet, addrs []net.Addr) []byte {
-	b, err := json.Marshal(envelope{d.s.id, p, addrs})
+	b, err := json.Marshal(envelope{d.id, p, addrs})
 	if err != nil {
 		panic(err)
 	}

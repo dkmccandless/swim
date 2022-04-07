@@ -73,10 +73,11 @@ func newStateMachine() *stateMachine {
 }
 
 // tick begins a new protocol period and returns a ping, as well as packets to
-// notify any members declared suspected or failed.
-func (s *stateMachine) tick() []packet {
+// notify any members declared suspected or failed and corresponding
+// Updates.
+func (s *stateMachine) tick() ([]packet, []Update) {
 	if len(s.ml.members) == 0 {
-		return nil
+		return nil, nil
 	}
 	s.pingReqs = map[id]id{}
 	var ps []packet
@@ -90,18 +91,18 @@ func (s *stateMachine) tick() []packet {
 		ps = append(ps, s.makeMessagePing(m))
 	}
 
-	var failed []id
+	var failed []Update
 	s.pingTarget, failed = s.ml.tick()
 	s.gotAck = false
 
 	// Handle suspicion timeouts
-	for _, id := range failed {
-		m := s.failedMessage(id)
+	for _, u := range failed {
+		m := s.failedMessage(id(u.ID))
 		s.mq.update(m)
 		ps = append(ps, s.makeMessagePing(m))
 	}
 
-	return append(ps, s.makePing(s.pingTarget))
+	return append(ps, s.makePing(s.pingTarget)), failed
 }
 
 // timeout produces ping requests if an ack has not been received from the
@@ -125,33 +126,48 @@ func (s *stateMachine) timeout() []packet {
 	used := map[id]bool{s.pingTarget: true}
 	for len(ps) < s.nPingReqs {
 		id := s.ml.order[rand.Intn(len(s.ml.order))]
-		if !used[id] {
-			used[id] = true
-			ps = append(ps, s.makePingReq(id, s.pingTarget))
+		if used[id] {
+			continue
 		}
+		used[id] = true
+		ps = append(ps, s.makePingReq(id, s.pingTarget))
 	}
 	return ps
 }
 
 // receive processes an incoming packet and produces any necessary outgoing
-// packets in response.
-func (s *stateMachine) receive(p packet) []packet {
+// packets and Updates in response.
+func (s *stateMachine) receive(p packet) ([]packet, []Update) {
+	var us []Update
 	for _, m := range p.Msgs {
-		if m.id == s.id {
-			switch m.typ {
-			case suspected:
-				if m.incarnation == s.incarnation {
-					s.incarnation++
-					s.mq.update(s.aliveMessage())
-				}
-			case failed:
-				// TODO
-			}
-		} else if s.ml.update(m) {
-			s.mq.update(m)
+		if u := s.processMsg(m); u != nil {
+			us = append(us, *u)
 		}
 	}
+	return s.processPacketType(p), us
+}
 
+func (s *stateMachine) processMsg(m *message) *Update {
+	if m.id == s.id {
+		switch m.typ {
+		case suspected:
+			if m.incarnation == s.incarnation {
+				s.incarnation++
+				s.mq.update(s.aliveMessage())
+			}
+		case failed:
+			// TODO
+		}
+		return nil
+	}
+	if !supersedes(m, s.ml.members[m.id]) {
+		return nil
+	}
+	s.mq.update(m)
+	return s.ml.update(m)
+}
+
+func (s *stateMachine) processPacketType(p packet) []packet {
 	switch p.Type {
 	case ping:
 		return []packet{s.makeAck(p.remoteID)}

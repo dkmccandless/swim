@@ -26,13 +26,12 @@ func newMemberList() *memberList {
 	}
 }
 
-// tick begins a new protocol period and returns the ping target and a list of
-// ids declared failed.
-func (ml *memberList) tick() (target id, failed []id) {
+// tick begins a new protocol period and returns the ping target and Updates
+// for any ids declared failed.
+func (ml *memberList) tick() (target id, failed []Update) {
 	for id := range ml.suspects {
 		if ml.suspects[id]++; ml.suspects[id] >= ml.suspicionTimeout() {
-			ml.remove(id)
-			failed = append(failed, id)
+			failed = append(failed, *ml.remove(id))
 		}
 	}
 	if ml.i = (ml.i + 1) % len(ml.order); ml.i == 0 {
@@ -44,32 +43,34 @@ func (ml *memberList) tick() (target id, failed []id) {
 }
 
 // update updates a node's membership status based on a received message and
-// reports whether an update occurred.
-func (ml *memberList) update(msg *message) bool {
+// returns an Update if the membership list changed.
+func (ml *memberList) update(msg *message) *Update {
 	id := msg.id
 	if !supersedes(msg, ml.members[id]) {
-		return false
+		return nil
 	}
+	var u *Update
 	switch msg.typ {
 	case alive:
-		ml.add(id)
+		u = ml.add(id)
 		ml.members[id] = msg
 		delete(ml.suspects, id)
 	case suspected:
-		ml.add(id)
+		u = ml.add(id)
 		ml.members[id] = msg
 		ml.suspects[id] = 0
 	case failed:
 		return ml.remove(id)
 	}
-	return true
+	return u
 }
 
-// add adds a new id to the list and inserts it into a random position in the
-// order. If the id is a current or former member, add is a no-op.
-func (ml *memberList) add(id id) {
+// add adds a new id to the list, inserts it into a random position in the
+// order, and returns an Update. If the id is a current or former member, add
+// returns nil instead.
+func (ml *memberList) add(id id) *Update {
 	if ml.isMember(id) || ml.removed[id] {
-		return
+		return nil
 	}
 	ml.members[id] = nil
 	ml.uncontacted[id] = true
@@ -82,12 +83,13 @@ func (ml *memberList) add(id id) {
 		ml.order = append(append(ml.order[:pos], id), ml.order[pos+1:]...)
 		ml.i++
 	}
+	return &Update{ID: string(id), IsMember: true}
 }
 
-// remove removes an id from the list and reports whether it was a member.
-func (ml *memberList) remove(id id) bool {
+// remove removes an id from the list and returns an Update if it was a member.
+func (ml *memberList) remove(id id) *Update {
 	if !ml.isMember(id) {
-		return false
+		return nil
 	}
 	delete(ml.members, id)
 	delete(ml.suspects, id)
@@ -106,7 +108,7 @@ func (ml *memberList) remove(id id) bool {
 		ml.order = append(ml.order[:pos], ml.order[pos+1:]...)
 		ml.i--
 	}
-	return true
+	return &Update{ID: string(id), IsMember: false}
 }
 
 // suspicionTimeout returns the number of periods to wait before declaring a
