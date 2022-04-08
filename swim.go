@@ -2,6 +2,7 @@ package swim
 
 import (
 	"encoding/json"
+	"math/rand"
 	"net"
 	"time"
 
@@ -9,7 +10,7 @@ import (
 )
 
 const (
-	tickPeriod  = time.Second
+	tickAverage = time.Second
 	pingTimeout = 200 * time.Millisecond
 )
 
@@ -46,21 +47,22 @@ func Open() (*Driver, error) {
 }
 
 func (d *Driver) runTick() {
-	ticker := time.NewTicker(tickPeriod)
-	defer ticker.Stop()
+	periodTimer := stoppedTimer()
 	pingTimer := stoppedTimer()
 	for {
 		select {
-		case <-ticker.C:
-			pingTimer.Reset(pingTimeout)
+		case <-periodTimer.C:
+			// Choose a random tickPeriod within 10% of tickAverage
+			tickPeriod := time.Duration(float64(tickAverage) * (0.9 + 0.2*rand.Float64()))
+			periodTimer.Reset(tickPeriod)
 			ps, us := d.s.tick()
+			d.send(ps...)
 			for _, u := range us {
 				id := id(u.ID)
 				u.Addr = d.addrs[id]
 				delete(d.addrs, id)
 				d.ch.Send() <- u
 			}
-			d.send(ps...)
 		case <-pingTimer.C:
 			d.send(d.s.timeout()...)
 		}
