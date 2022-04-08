@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math/rand"
 	"net"
+	"sync"
 	"time"
 
 	"swim/bufchan"
@@ -21,11 +22,13 @@ type Update struct {
 }
 
 type Driver struct {
+	mu    sync.Mutex // protects the following fields
 	s     *stateMachine
 	addrs map[id]net.Addr
-	id    id // copy of s.id
-	conn  net.PacketConn
-	ch    bufchan.Chan[Update]
+
+	id   id // copy of s.id
+	conn net.PacketConn
+	ch   bufchan.Chan[Update]
 }
 
 func Open() (*Driver, error) {
@@ -55,25 +58,33 @@ func (d *Driver) runTick() {
 			// Choose a random tickPeriod within 10% of tickAverage
 			tickPeriod := time.Duration(float64(tickAverage) * (0.9 + 0.2*rand.Float64()))
 			periodTimer.Reset(tickPeriod)
-			ps, us := d.s.tick()
-			d.send(ps...)
-			for _, u := range us {
-				id := id(u.ID)
-				u.Addr = d.addrs[id]
-				delete(d.addrs, id)
-				d.ch.Send() <- u
-			}
+			d.send(d.tick()...)
 		case <-pingTimer.C:
 			d.send(d.s.timeout()...)
 		}
 	}
 }
 
+func (d *Driver) tick() []packet {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	ps, us := d.s.tick()
+	for _, u := range us {
+		id := id(u.ID)
+		u.Addr = d.addrs[id]
+		delete(d.addrs, id)
+		d.ch.Send() <- u
+	}
+	return ps
+}
+
 func (d *Driver) SendHello(addr net.Addr) {
+	d.mu.Lock()
 	p := packet{
 		Type: ping,
 		Msgs: []*message{d.s.aliveMessage()},
 	}
+	d.mu.Unlock()
 	b := d.encode(p, []net.Addr{nil})
 	if _, err := d.conn.WriteTo(b, addr); err != nil {
 		// TODO: better error handling
@@ -83,16 +94,24 @@ func (d *Driver) SendHello(addr net.Addr) {
 
 func (d *Driver) send(ps ...packet) {
 	for _, p := range ps {
-		addrs := make([]net.Addr, len(p.Msgs))
-		for i, m := range p.Msgs {
-			addrs[i] = d.addrs[m.id]
-		}
+		dst, addrs := d.getAddrs(p)
 		b := d.encode(p, addrs)
-		if _, err := d.conn.WriteTo(b, d.addrs[p.remoteID]); err != nil {
+		if _, err := d.conn.WriteTo(b, dst); err != nil {
 			// TODO: better error handling
 			panic(err)
 		}
 	}
+}
+
+func (d *Driver) getAddrs(p packet) (dst net.Addr, addrs []net.Addr) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	addrs = make([]net.Addr, len(p.Msgs))
+	for i, m := range p.Msgs {
+		addrs[i] = d.addrs[m.id]
+	}
+	dst = d.addrs[p.remoteID]
+	return
 }
 
 func (d *Driver) runReceive() {
@@ -107,31 +126,38 @@ func (d *Driver) runReceive() {
 		if !ok {
 			continue
 		}
-		if d.addrs[p.remoteID] == nil {
-			// First contact from sender
-			d.addrs[p.remoteID] = addr
-			d.ch.Send() <- Update{addr, string(p.remoteID), true}
-		}
-		// Update address records
-		for i, addr := range addrs {
-			id := p.Msgs[i].id
-			if id == d.id || addr == nil {
-				continue
-			}
-			d.addrs[id] = addr
-		}
-
-		ps, us := d.s.receive(p)
+		ps, us := d.receive(p, addr, addrs)
 		for _, u := range us {
 			id := id(u.ID)
+			d.mu.Lock()
 			u.Addr = d.addrs[id]
 			if !u.IsMember {
 				delete(d.addrs, id)
 			}
+			d.mu.Unlock()
 			d.ch.Send() <- u
 		}
 		d.send(ps...)
 	}
+}
+
+func (d *Driver) receive(p packet, src net.Addr, addrs []net.Addr) ([]packet, []Update) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.addrs[p.remoteID] == nil {
+		// First contact from sender
+		d.addrs[p.remoteID] = src
+		d.ch.Send() <- Update{src, string(p.remoteID), true}
+	}
+	// Update address records
+	for i, addr := range addrs {
+		id := p.Msgs[i].id
+		if id == d.id || addr == nil {
+			continue
+		}
+		d.addrs[id] = addr
+	}
+	return d.s.receive(p)
 }
 
 func (d *Driver) Updates() <-chan Update {
