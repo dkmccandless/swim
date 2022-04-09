@@ -1,4 +1,4 @@
-module swim
+module github.com/dkmccandless/swim
 
 go 1.18
 

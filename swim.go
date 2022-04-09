@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"swim/bufchan"
+	"github.com/dkmccandless/swim/bufchan"
 )
 
 const (
