@@ -15,13 +15,15 @@ const (
 	pingTimeout = 200 * time.Millisecond
 )
 
+// An Update describes a change to the network membership.
 type Update struct {
 	Addr     net.Addr
 	ID       string
 	IsMember bool
 }
 
-type Driver struct {
+// A Node is a network node participating in the SWIM protocol.
+type Node struct {
 	mu    sync.Mutex // protects the following fields
 	s     *stateMachine
 	addrs map[id]net.Addr
@@ -31,25 +33,26 @@ type Driver struct {
 	ch   bufchan.Chan[Update]
 }
 
-func Open() (*Driver, error) {
+// Start creates a new Node and starts running the SWIM protocol on it.
+func Start() (*Node, error) {
 	conn, err := net.ListenPacket("udp", ":0")
 	if err != nil {
 		return nil, err
 	}
 	s := newStateMachine()
-	d := &Driver{
+	n := &Node{
 		s:     s,
 		addrs: make(map[id]net.Addr),
 		id:    s.id,
 		conn:  conn,
 		ch:    bufchan.Make[Update](),
 	}
-	go d.runReceive()
-	go d.runTick()
-	return d, nil
+	go n.runReceive()
+	go n.runTick()
+	return n, nil
 }
 
-func (d *Driver) runTick() {
+func (n *Node) runTick() {
 	periodTimer := stoppedTimer()
 	pingTimer := stoppedTimer()
 	for {
@@ -58,118 +61,125 @@ func (d *Driver) runTick() {
 			// Choose a random tickPeriod within 10% of tickAverage
 			tickPeriod := time.Duration(float64(tickAverage) * (0.9 + 0.2*rand.Float64()))
 			periodTimer.Reset(tickPeriod)
-			d.send(d.tick()...)
+			n.send(n.tick()...)
 		case <-pingTimer.C:
-			d.send(d.s.timeout()...)
+			n.send(n.s.timeout()...)
 		}
 	}
 }
 
-func (d *Driver) tick() []packet {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	ps, us := d.s.tick()
+func (n *Node) tick() []packet {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	ps, us := n.s.tick()
 	for _, u := range us {
 		id := id(u.ID)
-		u.Addr = d.addrs[id]
-		delete(d.addrs, id)
-		d.ch.Send() <- u
+		u.Addr = n.addrs[id]
+		delete(n.addrs, id)
+		n.ch.Send() <- u
 	}
 	return ps
 }
 
-func (d *Driver) SendHello(addr net.Addr) {
-	d.mu.Lock()
+// Join connects two previously unconnected nodes. Join is typically called
+// from a new node to connect with an existing node, or from an existing node
+// to connect with a new node.
+func (n *Node) Join(addr net.Addr) {
+	n.mu.Lock()
 	p := packet{
 		Type: ping,
-		Msgs: []*message{d.s.aliveMessage()},
+		Msgs: []*message{n.s.aliveMessage()},
 	}
-	d.mu.Unlock()
-	b := d.encode(p, []net.Addr{nil})
-	if _, err := d.conn.WriteTo(b, addr); err != nil {
+	n.mu.Unlock()
+	b := n.encode(p, []net.Addr{nil})
+	if _, err := n.conn.WriteTo(b, addr); err != nil {
 		// TODO: better error handling
 		panic(err)
 	}
 }
 
-func (d *Driver) send(ps ...packet) {
+func (n *Node) send(ps ...packet) {
 	for _, p := range ps {
-		dst, addrs := d.getAddrs(p)
-		b := d.encode(p, addrs)
-		if _, err := d.conn.WriteTo(b, dst); err != nil {
+		dst, addrs := n.getAddrs(p)
+		b := n.encode(p, addrs)
+		if _, err := n.conn.WriteTo(b, dst); err != nil {
 			// TODO: better error handling
 			panic(err)
 		}
 	}
 }
 
-func (d *Driver) getAddrs(p packet) (dst net.Addr, addrs []net.Addr) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+func (n *Node) getAddrs(p packet) (dst net.Addr, addrs []net.Addr) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	addrs = make([]net.Addr, len(p.Msgs))
 	for i, m := range p.Msgs {
-		addrs[i] = d.addrs[m.id]
+		addrs[i] = n.addrs[m.id]
 	}
-	dst = d.addrs[p.remoteID]
+	dst = n.addrs[p.remoteID]
 	return
 }
 
-func (d *Driver) runReceive() {
+func (n *Node) runReceive() {
 	for {
 		b := make([]byte, 1<<16)
-		n, addr, err := d.conn.ReadFrom(b)
+		size, addr, err := n.conn.ReadFrom(b)
 		if err != nil {
 			time.Sleep(time.Second)
 			continue
 		}
-		p, addrs, ok := d.decode(b[:n])
+		p, addrs, ok := n.decode(b[:size])
 		if !ok {
 			continue
 		}
-		ps, us := d.receive(p, addr, addrs)
+		ps, us := n.receive(p, addr, addrs)
 		for _, u := range us {
 			id := id(u.ID)
-			d.mu.Lock()
-			u.Addr = d.addrs[id]
+			n.mu.Lock()
+			u.Addr = n.addrs[id]
 			if !u.IsMember {
-				delete(d.addrs, id)
+				delete(n.addrs, id)
 			}
-			d.mu.Unlock()
-			d.ch.Send() <- u
+			n.mu.Unlock()
+			n.ch.Send() <- u
 		}
-		d.send(ps...)
+		n.send(ps...)
 	}
 }
 
-func (d *Driver) receive(p packet, src net.Addr, addrs []net.Addr) ([]packet, []Update) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.addrs[p.remoteID] == nil {
+func (n *Node) receive(p packet, src net.Addr, addrs []net.Addr) ([]packet, []Update) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.addrs[p.remoteID] == nil {
 		// First contact from sender
-		d.addrs[p.remoteID] = src
-		d.ch.Send() <- Update{src, string(p.remoteID), true}
+		n.addrs[p.remoteID] = src
+		n.ch.Send() <- Update{src, string(p.remoteID), true}
 	}
 	// Update address records
 	for i, addr := range addrs {
 		id := p.Msgs[i].id
-		if id == d.id || addr == nil {
+		if id == n.id || addr == nil {
 			continue
 		}
-		d.addrs[id] = addr
+		n.addrs[id] = addr
 	}
-	return d.s.receive(p)
+	return n.s.receive(p)
 }
 
-func (d *Driver) Updates() <-chan Update {
-	return d.ch.Receive()
+// Updates returns a channel from which Updates can be received.
+func (n *Node) Updates() <-chan Update {
+	return n.ch.Receive()
 }
 
-func (d *Driver) ID() string {
-	return string(d.id)
+// ID returns the Node's ID on the network.
+func (n *Node) ID() string {
+	return string(n.id)
 }
 
-func (d *Driver) LocalAddr() net.Addr {
-	return d.conn.LocalAddr()
+// LocalAddr returns the local network address, if known. It calls the
+// underlying PacketConn's LocalAddr method.
+func (n *Node) LocalAddr() net.Addr {
+	return n.conn.LocalAddr()
 }
 
 type envelope struct {
@@ -178,15 +188,15 @@ type envelope struct {
 	Addrs  []net.Addr
 }
 
-func (d *Driver) encode(p packet, addrs []net.Addr) []byte {
-	b, err := json.Marshal(envelope{d.id, p, addrs})
+func (n *Node) encode(p packet, addrs []net.Addr) []byte {
+	b, err := json.Marshal(envelope{n.id, p, addrs})
 	if err != nil {
 		panic(err)
 	}
 	return b
 }
 
-func (d *Driver) decode(b []byte) (packet, []net.Addr, bool) {
+func (n *Node) decode(b []byte) (packet, []net.Addr, bool) {
 	var e envelope
 	err := json.Unmarshal(b, &e)
 	e.P.remoteID = e.FromID
