@@ -180,6 +180,18 @@ func (s *stateMachine) processPacketType(p packet) []packet {
 	return nil
 }
 
+func (s *stateMachine) leave() packet {
+	var id id
+	for id = range s.ml.members {
+		break
+	}
+	return packet{
+		Type:     ping,
+		remoteID: id,
+		Msgs:     []*message{s.leaveMessage()},
+	}
+}
+
 func (s *stateMachine) makePing(dst id) packet {
 	return s.makePacket(ping, dst, dst)
 }
@@ -248,6 +260,12 @@ func (s *stateMachine) failedMessage(id id) *message {
 		Type: failed,
 		ID:   id,
 	}
+}
+
+// leaveMessage returns a message reporting s as failed. Sending this message
+// causes s to leave the network.
+func (s *stateMachine) leaveMessage() *message {
+	return s.failedMessage(s.id)
 }
 
 // supersedes reports whether a supersedes b.

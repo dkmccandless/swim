@@ -31,6 +31,7 @@ type Node struct {
 	id      id // copy of fsm.id
 	conn    net.PacketConn
 	updates bufchan.Chan[Update]
+	done    chan struct{}
 }
 
 // Start creates a new Node and starts running the SWIM protocol on it.
@@ -46,6 +47,7 @@ func Start() (*Node, error) {
 		id:      fsm.id,
 		conn:    conn,
 		updates: bufchan.Make[Update](),
+		done:    make(chan struct{}),
 	}
 	go n.runReceive()
 	go n.runTick()
@@ -65,7 +67,11 @@ func (n *Node) runTick() {
 			pingTimer.Reset(pingTimeout)
 			n.send(n.tick())
 		case <-pingTimer.C:
+			n.mu.Lock()
 			n.send(n.fsm.timeout())
+			n.mu.Unlock()
+		case <-n.done:
+			return
 		}
 	}
 }
@@ -97,6 +103,9 @@ func (n *Node) Join(remoteAddr net.Addr) {
 func (n *Node) send(ps []packet) {
 	for _, p := range ps {
 		dst, addrs := n.getAddrs(p)
+		if dst == nil {
+			continue
+		}
 		b := n.encode(p, addrs)
 		if _, err := n.conn.WriteTo(b, dst); err != nil {
 			// TODO: better error handling
@@ -108,11 +117,14 @@ func (n *Node) send(ps []packet) {
 func (n *Node) getAddrs(p packet) (dst net.Addr, addrs []net.Addr) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	dst = n.addrs[p.remoteID]
+	if dst == nil {
+		return
+	}
 	addrs = make([]net.Addr, len(p.Msgs))
 	for i, m := range p.Msgs {
 		addrs[i] = n.addrs[m.ID]
 	}
-	dst = n.addrs[p.remoteID]
 	return
 }
 
@@ -165,7 +177,15 @@ func (n *Node) sendUpdates(us []Update) {
 	}
 }
 
-// Updates returns a channel from which Updates can be received.
+// Stop disconnects n from the network and closes its Updates channel.
+func (n *Node) Stop() {
+	close(n.done)
+	n.send([]packet{n.fsm.leave()})
+	n.conn.Close()
+}
+
+// Updates returns a channel from which Updates can be received. The channel
+// is closed by calling Stop.
 func (n *Node) Updates() <-chan Update {
 	return n.updates.Receive()
 }
