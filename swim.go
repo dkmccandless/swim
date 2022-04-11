@@ -53,14 +53,16 @@ func Start() (*Node, error) {
 }
 
 func (n *Node) runTick() {
-	periodTimer := stoppedTimer()
+	periodTimer := time.NewTimer(0)
 	pingTimer := stoppedTimer()
 	for {
 		select {
 		case <-periodTimer.C:
-			// Choose a random tickPeriod within 10% of tickAverage
+			// Choose a random tick period within 10% of tickAverage to
+			// desynchronize the nodes' periods
 			tickPeriod := time.Duration(float64(tickAverage) * (0.9 + 0.2*rand.Float64()))
 			periodTimer.Reset(tickPeriod)
+			pingTimer.Reset(pingTimeout)
 			n.send(n.tick()...)
 		case <-pingTimer.C:
 			n.send(n.s.timeout()...)
