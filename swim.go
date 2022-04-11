@@ -17,20 +17,20 @@ const (
 
 // An Update describes a change to the network membership.
 type Update struct {
-	Addr     net.Addr
 	ID       string
 	IsMember bool
+	Addr     net.Addr
 }
 
 // A Node is a network node participating in the SWIM protocol.
 type Node struct {
 	mu    sync.Mutex // protects the following fields
-	s     *stateMachine
+	fsm   *stateMachine
 	addrs map[id]net.Addr
 
-	id   id // copy of s.id
-	conn net.PacketConn
-	ch   bufchan.Chan[Update]
+	id      id // copy of fsm.id
+	conn    net.PacketConn
+	updates bufchan.Chan[Update]
 }
 
 // Start creates a new Node and starts running the SWIM protocol on it.
@@ -39,13 +39,13 @@ func Start() (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := newStateMachine()
+	fsm := newStateMachine()
 	n := &Node{
-		s:     s,
-		addrs: make(map[id]net.Addr),
-		id:    s.id,
-		conn:  conn,
-		ch:    bufchan.Make[Update](),
+		fsm:     fsm,
+		addrs:   make(map[id]net.Addr),
+		id:      fsm.id,
+		conn:    conn,
+		updates: bufchan.Make[Update](),
 	}
 	go n.runReceive()
 	go n.runTick()
@@ -63,44 +63,38 @@ func (n *Node) runTick() {
 			tickPeriod := time.Duration(float64(tickAverage) * (0.9 + 0.2*rand.Float64()))
 			periodTimer.Reset(tickPeriod)
 			pingTimer.Reset(pingTimeout)
-			n.send(n.tick()...)
+			n.send(n.tick())
 		case <-pingTimer.C:
-			n.send(n.s.timeout()...)
+			n.send(n.fsm.timeout())
 		}
 	}
 }
 
 func (n *Node) tick() []packet {
 	n.mu.Lock()
-	defer n.mu.Unlock()
-	ps, us := n.s.tick()
-	for _, u := range us {
-		id := id(u.ID)
-		u.Addr = n.addrs[id]
-		delete(n.addrs, id)
-		n.ch.Send() <- u
-	}
+	ps, us := n.fsm.tick()
+	n.mu.Unlock()
+	n.sendUpdates(us)
 	return ps
 }
 
-// Join connects two previously unconnected nodes. Join is typically called
-// from a new node to connect with an existing node, or from an existing node
-// to connect with a new node.
-func (n *Node) Join(addr net.Addr) {
+// Join connects n to a remote node. This is typically used to connect a new
+// node to an existing network.
+func (n *Node) Join(remoteAddr net.Addr) {
 	n.mu.Lock()
 	p := packet{
 		Type: ping,
-		Msgs: []*message{n.s.aliveMessage()},
+		Msgs: []*message{n.fsm.aliveMessage()},
 	}
 	n.mu.Unlock()
 	b := n.encode(p, []net.Addr{nil})
-	if _, err := n.conn.WriteTo(b, addr); err != nil {
+	if _, err := n.conn.WriteTo(b, remoteAddr); err != nil {
 		// TODO: better error handling
 		panic(err)
 	}
 }
 
-func (n *Node) send(ps ...packet) {
+func (n *Node) send(ps []packet) {
 	for _, p := range ps {
 		dst, addrs := n.getAddrs(p)
 		b := n.encode(p, addrs)
@@ -125,27 +119,18 @@ func (n *Node) getAddrs(p packet) (dst net.Addr, addrs []net.Addr) {
 func (n *Node) runReceive() {
 	for {
 		b := make([]byte, 1<<16)
-		size, addr, err := n.conn.ReadFrom(b)
+		len, addr, err := n.conn.ReadFrom(b)
 		if err != nil {
 			time.Sleep(time.Second)
 			continue
 		}
-		p, addrs, ok := n.decode(b[:size])
+		p, addrs, ok := n.decode(b[:len])
 		if !ok {
 			continue
 		}
 		ps, us := n.receive(p, addr, addrs)
-		for _, u := range us {
-			id := id(u.ID)
-			n.mu.Lock()
-			u.Addr = n.addrs[id]
-			if !u.IsMember {
-				delete(n.addrs, id)
-			}
-			n.mu.Unlock()
-			n.ch.Send() <- u
-		}
-		n.send(ps...)
+		n.sendUpdates(us)
+		n.send(ps)
 	}
 }
 
@@ -155,7 +140,6 @@ func (n *Node) receive(p packet, src net.Addr, addrs []net.Addr) ([]packet, []Up
 	if n.addrs[p.remoteID] == nil {
 		// First contact from sender
 		n.addrs[p.remoteID] = src
-		n.ch.Send() <- Update{src, string(p.remoteID), true}
 	}
 	// Update address records
 	for i, addr := range addrs {
@@ -165,15 +149,28 @@ func (n *Node) receive(p packet, src net.Addr, addrs []net.Addr) ([]packet, []Up
 		}
 		n.addrs[id] = addr
 	}
-	return n.s.receive(p)
+	return n.fsm.receive(p)
+}
+
+func (n *Node) sendUpdates(us []Update) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, u := range us {
+		id := id(u.ID)
+		u.Addr = n.addrs[id]
+		if !u.IsMember {
+			delete(n.addrs, id)
+		}
+		n.updates.Send() <- u
+	}
 }
 
 // Updates returns a channel from which Updates can be received.
 func (n *Node) Updates() <-chan Update {
-	return n.ch.Receive()
+	return n.updates.Receive()
 }
 
-// ID returns the Node's ID on the network.
+// ID returns n's ID on the network.
 func (n *Node) ID() string {
 	return string(n.id)
 }
