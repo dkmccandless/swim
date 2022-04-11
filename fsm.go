@@ -111,26 +111,16 @@ func (s *stateMachine) timeout() []packet {
 	if s.gotAck || !s.ml.isMember(s.pingTarget) {
 		return nil
 	}
-
-	if len(s.ml.members) <= s.nPingReqs {
-		var ps []packet
-		for id := range s.ml.members {
-			if id != s.pingTarget {
-				ps = append(ps, s.makePingReq(id, s.pingTarget))
-			}
-		}
-		return ps
-	}
-
 	var ps []packet
-	used := map[id]bool{s.pingTarget: true}
-	for len(ps) < s.nPingReqs {
-		id := s.ml.order[rand.Intn(len(s.ml.order))]
-		if used[id] {
+	for _, i := range rand.Perm(len(s.ml.order)) {
+		id := s.ml.order[i]
+		if id == s.pingTarget {
 			continue
 		}
-		used[id] = true
 		ps = append(ps, s.makePingReq(id, s.pingTarget))
+		if len(ps) == s.nPingReqs {
+			break
+		}
 	}
 	return ps
 }
