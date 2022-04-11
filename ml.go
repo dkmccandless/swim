@@ -75,14 +75,11 @@ func (ml *memberList) add(id id) *Update {
 	ml.members[id] = nil
 	ml.uncontacted[id] = true
 
-	pos := rand.Intn(len(ml.order) + 1)
-	if pos > ml.i {
-		ml.order = append(ml.order, id)
-		ml.order[pos], ml.order[len(ml.order)-1] = ml.order[len(ml.order)-1], ml.order[pos]
-	} else {
-		ml.order = append(append(ml.order[:pos], id), ml.order[pos:]...)
-		ml.i++
-	}
+	n := len(ml.order)
+	ml.order = append(ml.order, id)
+	k := rand.Intn(len(ml.order))
+	ml.order[k], ml.order[n] = ml.order[n], ml.order[k]
+
 	return &Update{ID: string(id), IsMember: true}
 }
 
