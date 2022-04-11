@@ -187,11 +187,18 @@ func (n *Node) LocalAddr() net.Addr {
 type envelope struct {
 	FromID id
 	P      packet
-	Addrs  []net.Addr
+	Addrs  []string
 }
 
 func (n *Node) encode(p packet, addrs []net.Addr) []byte {
-	b, err := json.Marshal(envelope{n.id, p, addrs})
+	envAddrs := make([]string, len(addrs))
+	for i, a := range addrs {
+		if a == nil {
+			continue
+		}
+		envAddrs[i] = a.String()
+	}
+	b, err := json.Marshal(envelope{n.id, p, envAddrs})
 	if err != nil {
 		panic(err)
 	}
@@ -201,8 +208,20 @@ func (n *Node) encode(p packet, addrs []net.Addr) []byte {
 func (n *Node) decode(b []byte) (packet, []net.Addr, bool) {
 	var e envelope
 	err := json.Unmarshal(b, &e)
+	addrs := make([]net.Addr, len(e.Addrs))
+	for i, s := range e.Addrs {
+		if s == "" {
+			continue
+		}
+		a, err := net.ResolveUDPAddr("udp", s)
+		if err != nil {
+			// TODO: better error handling
+			panic(err)
+		}
+		addrs[i] = a
+	}
 	e.P.remoteID = e.FromID
-	return e.P, e.Addrs, err == nil
+	return e.P, addrs, err == nil
 }
 
 func stoppedTimer() *time.Timer {
