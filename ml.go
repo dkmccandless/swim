@@ -77,10 +77,10 @@ func (ml *memberList) add(id id) *Update {
 
 	pos := rand.Intn(len(ml.order) + 1)
 	if pos > ml.i {
-		ml.order = append(ml.order, ml.order[pos])
-		ml.order[pos] = id
+		ml.order = append(ml.order, id)
+		ml.order[pos], ml.order[len(ml.order)-1] = ml.order[len(ml.order)-1], ml.order[pos]
 	} else {
-		ml.order = append(append(ml.order[:pos], id), ml.order[pos+1:]...)
+		ml.order = append(append(ml.order[:pos], id), ml.order[pos:]...)
 		ml.i++
 	}
 	return &Update{ID: string(id), IsMember: true}
