@@ -116,7 +116,7 @@ func (n *Node) getAddrs(p packet) (dst net.Addr, addrs []net.Addr) {
 	defer n.mu.Unlock()
 	addrs = make([]net.Addr, len(p.Msgs))
 	for i, m := range p.Msgs {
-		addrs[i] = n.addrs[m.id]
+		addrs[i] = n.addrs[m.ID]
 	}
 	dst = n.addrs[p.remoteID]
 	return
@@ -159,7 +159,7 @@ func (n *Node) receive(p packet, src net.Addr, addrs []net.Addr) ([]packet, []Up
 	}
 	// Update address records
 	for i, addr := range addrs {
-		id := p.Msgs[i].id
+		id := p.Msgs[i].ID
 		if id == n.id || addr == nil {
 			continue
 		}

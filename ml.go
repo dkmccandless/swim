@@ -45,12 +45,12 @@ func (ml *memberList) tick() (target id, failed []Update) {
 // update updates a node's membership status based on a received message and
 // returns an Update if the membership list changed.
 func (ml *memberList) update(msg *message) *Update {
-	id := msg.id
+	id := msg.ID
 	if !supersedes(msg, ml.members[id]) {
 		return nil
 	}
 	var u *Update
-	switch msg.typ {
+	switch msg.Type {
 	case alive:
 		u = ml.add(id)
 		ml.members[id] = msg

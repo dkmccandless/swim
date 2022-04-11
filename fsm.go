@@ -53,9 +53,9 @@ const (
 
 // A message carries membership information.
 type message struct {
-	typ         status
-	id          id
-	incarnation int
+	Type        status
+	ID          id
+	Incarnation int
 }
 
 func newStateMachine() *stateMachine {
@@ -148,10 +148,10 @@ func (s *stateMachine) receive(p packet) ([]packet, []Update) {
 }
 
 func (s *stateMachine) processMsg(m *message) *Update {
-	if m.id == s.id {
-		switch m.typ {
+	if m.ID == s.id {
+		switch m.Type {
 		case suspected:
-			if m.incarnation == s.incarnation {
+			if m.Incarnation == s.incarnation {
 				s.incarnation++
 				s.mq.update(s.aliveMessage())
 			}
@@ -160,7 +160,7 @@ func (s *stateMachine) processMsg(m *message) *Update {
 		}
 		return nil
 	}
-	if !supersedes(m, s.ml.members[m.id]) {
+	if !supersedes(m, s.ml.members[m.ID]) {
 		return nil
 	}
 	s.mq.update(m)
@@ -229,7 +229,7 @@ func (s *stateMachine) makePacket(typ packetType, dst, target id) packet {
 func (s *stateMachine) makeMessagePing(m *message) packet {
 	return packet{
 		Type:     ping,
-		remoteID: m.id,
+		remoteID: m.ID,
 		Msgs:     []*message{m},
 	}
 }
@@ -237,26 +237,26 @@ func (s *stateMachine) makeMessagePing(m *message) packet {
 // aliveMessage returns a message reporting the stateMachine as alive.
 func (s *stateMachine) aliveMessage() *message {
 	return &message{
-		typ:         alive,
-		id:          s.id,
-		incarnation: s.incarnation,
+		Type:        alive,
+		ID:          s.id,
+		Incarnation: s.incarnation,
 	}
 }
 
 // suspectedMessage returns a message reporting an id as suspected.
 func (s *stateMachine) suspectedMessage(id id) *message {
 	return &message{
-		typ:         suspected,
-		id:          id,
-		incarnation: s.ml.members[id].incarnation,
+		Type:        suspected,
+		ID:          id,
+		Incarnation: s.ml.members[id].Incarnation,
 	}
 }
 
 // failedMessage returns a message reporting an id as failed.
 func (s *stateMachine) failedMessage(id id) *message {
 	return &message{
-		typ: failed,
-		id:  id,
+		Type: failed,
+		ID:   id,
 	}
 }
 
@@ -268,19 +268,19 @@ func supersedes(a, b *message) bool {
 	if b == nil {
 		return true
 	}
-	if a.id != b.id {
+	if a.ID != b.ID {
 		return false
 	}
-	if b.typ == failed {
+	if b.Type == failed {
 		return false
 	}
-	if a.typ == failed {
+	if a.Type == failed {
 		return true
 	}
-	if a.incarnation == b.incarnation {
-		return a.typ == suspected && b.typ == alive
+	if a.Incarnation == b.Incarnation {
+		return a.Type == suspected && b.Type == alive
 	}
-	return a.incarnation > b.incarnation
+	return a.Incarnation > b.Incarnation
 }
 
 func randID() id {
