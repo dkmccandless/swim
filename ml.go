@@ -34,6 +34,9 @@ func (ml *memberList) tick() (target id, failed []Update) {
 			failed = append(failed, *ml.remove(id))
 		}
 	}
+	if len(ml.order) == 0 {
+		return "", failed
+	}
 	if ml.i = (ml.i + 1) % len(ml.order); ml.i == 0 {
 		rand.Shuffle(len(ml.order), func(i, j int) {
 			ml.order[i], ml.order[j] = ml.order[j], ml.order[i]
