@@ -102,6 +102,9 @@ func (s *stateMachine) tick() ([]packet, []Update) {
 		ps = append(ps, s.makeMessagePing(m))
 	}
 
+	if s.pingTarget == "" {
+		return ps, failed
+	}
 	return append(ps, s.makePing(s.pingTarget)), failed
 }
 

@@ -2,6 +2,7 @@ package swim
 
 import (
 	"encoding/json"
+	"errors"
 	"math/rand"
 	"net"
 	"sync"
@@ -65,7 +66,7 @@ func (n *Node) runTick() {
 			pingTimer.Reset(pingTimeout)
 			n.send(n.tick())
 		case <-pingTimer.C:
-			n.send(n.fsm.timeout())
+			n.send(n.timeout())
 		}
 	}
 }
@@ -76,6 +77,12 @@ func (n *Node) tick() []packet {
 	n.mu.Unlock()
 	n.sendUpdates(us)
 	return ps
+}
+
+func (n *Node) timeout() []packet {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.fsm.timeout()
 }
 
 // Join connects n to a remote node. This is typically used to connect a new
@@ -89,6 +96,9 @@ func (n *Node) Join(remoteAddr net.Addr) {
 	n.mu.Unlock()
 	b := n.encode(p, []net.Addr{nil})
 	if _, err := n.conn.WriteTo(b, remoteAddr); err != nil {
+		if errors.Is(err, net.ErrClosed) {
+			return
+		}
 		// TODO: better error handling
 		panic(err)
 	}
@@ -97,8 +107,14 @@ func (n *Node) Join(remoteAddr net.Addr) {
 func (n *Node) send(ps []packet) {
 	for _, p := range ps {
 		dst, addrs := n.getAddrs(p)
+		if dst == nil {
+			continue
+		}
 		b := n.encode(p, addrs)
 		if _, err := n.conn.WriteTo(b, dst); err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
 			// TODO: better error handling
 			panic(err)
 		}
@@ -108,12 +124,15 @@ func (n *Node) send(ps []packet) {
 func (n *Node) getAddrs(p packet) (dst net.Addr, addrs []net.Addr) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	dst = n.addrs[p.remoteID]
+	if dst == nil {
+		return nil, nil
+	}
 	addrs = make([]net.Addr, len(p.Msgs))
 	for i, m := range p.Msgs {
 		addrs[i] = n.addrs[m.ID]
 	}
-	dst = n.addrs[p.remoteID]
-	return
+	return dst, addrs
 }
 
 func (n *Node) runReceive() {
