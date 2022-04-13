@@ -29,3 +29,6 @@ jobs:
 
     - name: go test
       run: go test -v ./...
+
+    - name: go test -race
+      run: go test -race ./...
