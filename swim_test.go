@@ -2,7 +2,6 @@ package swim
 
 import (
 	"net"
-	"strings"
 	"testing"
 
 	"kr.dev/diff"
