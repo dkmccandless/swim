@@ -58,11 +58,7 @@ func launch(n int) []*Node {
 }
 
 func (n *Node) localAddr() net.Addr {
-	s := n.LocalAddr().String()
-	s = s[strings.LastIndex(s, ":")+1:]
-	addr, err := net.ResolveUDPAddr("udp", "[::1]:"+s)
-	if err != nil {
-		panic(err)
-	}
-	return addr
+	u := *n.LocalAddr().(*net.UDPAddr)
+	u.IP = net.IPv6loopback
+	return &u
 }
