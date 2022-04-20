@@ -25,9 +25,8 @@ type Update struct {
 
 // A Node is a network node participating in the SWIM protocol.
 type Node struct {
-	mu    sync.Mutex // protects the following fields
-	fsm   *stateMachine
-	addrs map[id]net.Addr
+	mu  sync.Mutex // protects the following fields
+	fsm *stateMachine
 
 	id      id // copy of fsm.id
 	conn    net.PacketConn
@@ -43,7 +42,6 @@ func Start() (*Node, error) {
 	fsm := newStateMachine()
 	n := &Node{
 		fsm:     fsm,
-		addrs:   make(map[id]net.Addr),
 		id:      fsm.id,
 		conn:    conn,
 		updates: bufchan.Make[Update](),
@@ -124,15 +122,7 @@ func (n *Node) send(ps []packet) {
 func (n *Node) getAddrs(p packet) (dst net.Addr, addrs []net.Addr) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	dst = n.addrs[p.remoteID]
-	if dst == nil {
-		return nil, nil
-	}
-	addrs = make([]net.Addr, len(p.Msgs))
-	for i, m := range p.Msgs {
-		addrs[i] = n.addrs[m.ID]
-	}
-	return dst, addrs
+	return n.fsm.getAddrs(p)
 }
 
 func (n *Node) runReceive() {
@@ -156,30 +146,11 @@ func (n *Node) runReceive() {
 func (n *Node) receive(p packet, src net.Addr, addrs []net.Addr) ([]packet, []Update) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if n.addrs[p.remoteID] == nil {
-		// First contact from sender
-		n.addrs[p.remoteID] = src
-	}
-	// Update address records
-	for i, addr := range addrs {
-		id := p.Msgs[i].ID
-		if id == n.id || addr == nil {
-			continue
-		}
-		n.addrs[id] = addr
-	}
-	return n.fsm.receive(p)
+	return n.fsm.receive(p, src, addrs)
 }
 
 func (n *Node) sendUpdates(us []Update) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
 	for _, u := range us {
-		id := id(u.ID)
-		u.Addr = n.addrs[id]
-		if !u.IsMember {
-			delete(n.addrs, id)
-		}
 		n.updates.Send() <- u
 	}
 }
