@@ -92,7 +92,7 @@ func (n *Node) Join(remoteAddr net.Addr) {
 		Msgs: []*message{n.fsm.aliveMessage()},
 	}
 	n.mu.Unlock()
-	b := n.encode(p, []net.Addr{nil})
+	b := encode(n.id, p, []net.Addr{nil})
 	if _, err := n.conn.WriteTo(b, remoteAddr); err != nil {
 		if errors.Is(err, net.ErrClosed) {
 			return
@@ -108,7 +108,7 @@ func (n *Node) send(ps []packet) {
 		if dst == nil {
 			continue
 		}
-		b := n.encode(p, addrs)
+		b := encode(n.id, p, addrs)
 		if _, err := n.conn.WriteTo(b, dst); err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return
@@ -133,7 +133,7 @@ func (n *Node) runReceive() {
 			time.Sleep(time.Second)
 			continue
 		}
-		p, addrs, ok := n.decode(b[:len])
+		p, addrs, ok := decode(b[:len])
 		if !ok {
 			continue
 		}
@@ -177,7 +177,7 @@ type envelope struct {
 	Addrs  []string
 }
 
-func (n *Node) encode(p packet, addrs []net.Addr) []byte {
+func encode(id id, p packet, addrs []net.Addr) []byte {
 	envAddrs := make([]string, len(addrs))
 	for i, a := range addrs {
 		if a == nil {
@@ -185,14 +185,14 @@ func (n *Node) encode(p packet, addrs []net.Addr) []byte {
 		}
 		envAddrs[i] = a.String()
 	}
-	b, err := json.Marshal(envelope{n.id, p, envAddrs})
+	b, err := json.Marshal(envelope{id, p, envAddrs})
 	if err != nil {
 		panic(err)
 	}
 	return b
 }
 
-func (n *Node) decode(b []byte) (packet, []net.Addr, bool) {
+func decode(b []byte) (packet, []net.Addr, bool) {
 	var e envelope
 	err := json.Unmarshal(b, &e)
 	addrs := make([]net.Addr, len(e.Addrs))
