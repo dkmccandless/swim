@@ -2,6 +2,7 @@ package swim
 
 import (
 	"net"
+	"net/netip"
 	"testing"
 
 	"kr.dev/diff"
@@ -11,7 +12,7 @@ var opt = diff.ZeroFields[Update]("Addr")
 
 func TestDetectJoinAndFail(t *testing.T) {
 	nodes := launch(2)
-	addr0 := nodes[0].localAddr()
+	addr0 := nodes[0].localAddrPort()
 	update := func(n int, isMember bool) Update {
 		return Update{ID: string(nodes[n].id), IsMember: isMember}
 	}
@@ -56,8 +57,8 @@ func launch(n int) []*Node {
 	return nodes
 }
 
-func (n *Node) localAddr() net.Addr {
-	u := *n.LocalAddr().(*net.UDPAddr)
+func (n *Node) localAddrPort() netip.AddrPort {
+	u := *n.conn.LocalAddr().(*net.UDPAddr)
 	u.IP = net.IPv6loopback
-	return &u
+	return u.AddrPort()
 }
