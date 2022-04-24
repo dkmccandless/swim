@@ -3,6 +3,7 @@ package swim
 import (
 	"encoding/base32"
 	"math/rand"
+	"net"
 )
 
 type id string
@@ -13,8 +14,9 @@ type stateMachine struct {
 	id          id
 	incarnation int
 
-	ml *memberList
-	mq *messageQueue
+	addrs map[id]net.Addr
+	ml    *memberList
+	mq    *messageQueue
 
 	pingTarget id
 	gotAck     bool
@@ -61,7 +63,9 @@ type message struct {
 func newStateMachine() *stateMachine {
 	s := &stateMachine{
 		id: randID(),
-		ml: newMemberList(),
+
+		addrs: make(map[id]net.Addr),
+		ml:    newMemberList(),
 
 		pingReqs:  make(map[id]id),
 		nPingReqs: 2, // TODO: scale according to permissible false positive probability
@@ -97,7 +101,10 @@ func (s *stateMachine) tick() ([]packet, []Update) {
 
 	// Handle suspicion timeouts
 	for _, u := range failed {
-		m := s.failedMessage(id(u.ID))
+		id := id(u.ID)
+		u.Addr = s.addrs[id]
+		delete(s.addrs, id)
+		m := s.failedMessage(id)
 		s.mq.update(m)
 		ps = append(ps, s.makeMessagePing(m))
 	}
@@ -130,10 +137,28 @@ func (s *stateMachine) timeout() []packet {
 
 // receive processes an incoming packet and produces any necessary outgoing
 // packets and Updates in response.
-func (s *stateMachine) receive(p packet) ([]packet, []Update) {
+func (s *stateMachine) receive(p packet, src net.Addr, addrs []net.Addr) ([]packet, []Update) {
+	if s.addrs[p.remoteID] == nil {
+		// First contact from sender
+		s.addrs[p.remoteID] = src
+	}
+	// Update address records
+	for i, addr := range addrs {
+		id := p.Msgs[i].ID
+		if id == s.id || addr == nil {
+			continue
+		}
+		s.addrs[id] = addr
+	}
+
 	var us []Update
 	for _, m := range p.Msgs {
 		if u := s.processMsg(m); u != nil {
+			id := id(u.ID)
+			u.Addr = s.addrs[id]
+			if !u.IsMember {
+				delete(s.addrs, id)
+			}
 			us = append(us, *u)
 		}
 	}
@@ -181,6 +206,18 @@ func (s *stateMachine) processPacketType(p packet) []packet {
 		return ps
 	}
 	return nil
+}
+
+func (s *stateMachine) getAddrs(p packet) (dst net.Addr, addrs []net.Addr) {
+	dst = s.addrs[p.remoteID]
+	if dst == nil {
+		return nil, nil
+	}
+	addrs = make([]net.Addr, len(p.Msgs))
+	for i, m := range p.Msgs {
+		addrs[i] = s.addrs[m.ID]
+	}
+	return dst, addrs
 }
 
 func (s *stateMachine) makePing(dst id) packet {
