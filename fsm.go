@@ -58,6 +58,7 @@ type message struct {
 	Type        status
 	ID          id
 	Incarnation int
+	Addr        netip.AddrPort
 }
 
 func newStateMachine() *stateMachine {
@@ -103,8 +104,8 @@ func (s *stateMachine) tick() ([]packet, []Update) {
 	for _, u := range failed {
 		id := id(u.ID)
 		u.Addr = s.addrs[id]
-		delete(s.addrs, id)
 		m := s.failedMessage(id)
+		delete(s.addrs, id)
 		s.mq.update(m)
 		ps = append(ps, s.makeMessagePing(m))
 	}
@@ -137,18 +138,21 @@ func (s *stateMachine) timeout() []packet {
 
 // receive processes an incoming packet and produces any necessary outgoing
 // packets and Updates in response.
-func (s *stateMachine) receive(p packet, src netip.AddrPort, addrs []netip.AddrPort) ([]packet, []Update) {
+func (s *stateMachine) receive(p packet, src netip.AddrPort) ([]packet, []Update) {
 	if s.addrs[p.remoteID] == (netip.AddrPort{}) {
 		// First contact from sender
 		s.addrs[p.remoteID] = src
 	}
-	// Update address records
-	for i, addr := range addrs {
-		id := p.Msgs[i].ID
-		if id == s.id || addr == (netip.AddrPort{}) {
+	// Update address records and populate empty message addresses
+	for i, m := range p.Msgs {
+		switch {
+		case m.ID == s.id:
 			continue
+		case m.Addr == netip.AddrPort{}:
+			p.Msgs[i].Addr = src
+		default:
+			s.addrs[m.ID] = m.Addr
 		}
-		s.addrs[id] = addr
 	}
 
 	var us []Update
@@ -208,16 +212,8 @@ func (s *stateMachine) processPacketType(p packet) []packet {
 	return nil
 }
 
-func (s *stateMachine) getAddrs(p packet) (dst netip.AddrPort, addrs []netip.AddrPort) {
-	dst = s.addrs[p.remoteID]
-	if dst == (netip.AddrPort{}) {
-		return netip.AddrPort{}, nil
-	}
-	addrs = make([]netip.AddrPort, len(p.Msgs))
-	for i, m := range p.Msgs {
-		addrs[i] = s.addrs[m.ID]
-	}
-	return dst, addrs
+func (s *stateMachine) getAddr(p packet) netip.AddrPort {
+	return s.addrs[p.remoteID]
 }
 
 func (s *stateMachine) makePing(dst id) packet {
@@ -279,6 +275,7 @@ func (s *stateMachine) suspectedMessage(id id) *message {
 		Type:        suspected,
 		ID:          id,
 		Incarnation: s.ml.members[id].Incarnation,
+		Addr:        s.addrs[id],
 	}
 }
 
@@ -287,6 +284,7 @@ func (s *stateMachine) failedMessage(id id) *message {
 	return &message{
 		Type: failed,
 		ID:   id,
+		Addr: s.addrs[id],
 	}
 }
 

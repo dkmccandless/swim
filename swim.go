@@ -93,7 +93,7 @@ func (n *Node) Join(remote netip.AddrPort) {
 		Msgs: []*message{n.fsm.aliveMessage()},
 	}
 	n.mu.Unlock()
-	b := encode(n.id, p, []netip.AddrPort{{}})
+	b := encode(n.id, p)
 	if _, err := n.conn.WriteToUDPAddrPort(b, remote); err != nil {
 		if errors.Is(err, net.ErrClosed) {
 			return
@@ -105,11 +105,11 @@ func (n *Node) Join(remote netip.AddrPort) {
 
 func (n *Node) send(ps []packet) {
 	for _, p := range ps {
-		dst, addrs := n.getAddrs(p)
+		dst := n.getAddr(p)
 		if dst == (netip.AddrPort{}) {
 			continue
 		}
-		b := encode(n.id, p, addrs)
+		b := encode(n.id, p)
 		if _, err := n.conn.WriteToUDPAddrPort(b, dst); err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return
@@ -120,10 +120,10 @@ func (n *Node) send(ps []packet) {
 	}
 }
 
-func (n *Node) getAddrs(p packet) (dst netip.AddrPort, addrs []netip.AddrPort) {
+func (n *Node) getAddr(p packet) netip.AddrPort {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	return n.fsm.getAddrs(p)
+	return n.fsm.getAddr(p)
 }
 
 func (n *Node) runReceive() {
@@ -135,20 +135,20 @@ func (n *Node) runReceive() {
 			continue
 		}
 
-		p, addrs, ok := decode(b[:len])
+		p, ok := decode(b[:len])
 		if !ok {
 			continue
 		}
-		ps, us := n.receive(p, addr, addrs)
+		ps, us := n.receive(p, addr)
 		n.sendUpdates(us)
 		n.send(ps)
 	}
 }
 
-func (n *Node) receive(p packet, src netip.AddrPort, addrs []netip.AddrPort) ([]packet, []Update) {
+func (n *Node) receive(p packet, src netip.AddrPort) ([]packet, []Update) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	return n.fsm.receive(p, src, addrs)
+	return n.fsm.receive(p, src)
 }
 
 func (n *Node) sendUpdates(us []Update) {
@@ -175,22 +175,21 @@ func (n *Node) LocalAddr() netip.AddrPort {
 type envelope struct {
 	FromID id
 	P      packet
-	Addrs  []netip.AddrPort
 }
 
-func encode(id id, p packet, addrs []netip.AddrPort) []byte {
-	b, err := json.Marshal(envelope{id, p, addrs})
+func encode(id id, p packet) []byte {
+	b, err := json.Marshal(envelope{id, p})
 	if err != nil {
 		panic(err)
 	}
 	return b
 }
 
-func decode(b []byte) (packet, []netip.AddrPort, bool) {
+func decode(b []byte) (packet, bool) {
 	var e envelope
 	err := json.Unmarshal(b, &e)
 	e.P.remoteID = e.FromID
-	return e.P, e.Addrs, err == nil
+	return e.P, err == nil
 }
 
 func stoppedTimer() *time.Timer {

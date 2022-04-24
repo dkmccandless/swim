@@ -7,11 +7,11 @@ import (
 )
 
 func TestSupersedes(t *testing.T) {
-	a1 := &message{alive, "abc", 1}
-	s1 := &message{suspected, "abc", 1}
-	a2 := &message{alive, "abc", 2}
-	s2 := &message{suspected, "abc", 2}
-	f := &message{failed, "abc", 0}
+	a1 := &message{Type: alive, ID: "abc", Incarnation: 1}
+	s1 := &message{Type: suspected, ID: "abc", Incarnation: 1}
+	a2 := &message{Type: alive, ID: "abc", Incarnation: 2}
+	s2 := &message{Type: suspected, ID: "abc", Incarnation: 2}
+	f := &message{Type: failed, ID: "abc", Incarnation: 0}
 	for _, test := range []struct {
 		a, b *message
 		want bool
@@ -40,8 +40,8 @@ func TestSupersedes(t *testing.T) {
 		{a2, s1, true},
 		{a1, s2, false},
 		{s2, a1, true},
-		{a2, &message{alive, "def", 1}, false},
-		{&message{alive, "def", 2}, a1, false},
+		{a2, &message{Type: alive, ID: "def", Incarnation: 1}, false},
+		{&message{Type: alive, ID: "def", Incarnation: 2}, a1, false},
 	} {
 		diff.Test(t, t.Errorf, supersedes(test.a, test.b), test.want)
 	}
