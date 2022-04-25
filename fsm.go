@@ -3,7 +3,7 @@ package swim
 import (
 	"encoding/base32"
 	"math/rand"
-	"net"
+	"net/netip"
 )
 
 type id string
@@ -14,7 +14,7 @@ type stateMachine struct {
 	id          id
 	incarnation int
 
-	addrs map[id]net.Addr
+	addrs map[id]netip.AddrPort
 	ml    *memberList
 	mq    *messageQueue
 
@@ -64,7 +64,7 @@ func newStateMachine() *stateMachine {
 	s := &stateMachine{
 		id: randID(),
 
-		addrs: make(map[id]net.Addr),
+		addrs: make(map[id]netip.AddrPort),
 		ml:    newMemberList(),
 
 		pingReqs:  make(map[id]id),
@@ -137,15 +137,15 @@ func (s *stateMachine) timeout() []packet {
 
 // receive processes an incoming packet and produces any necessary outgoing
 // packets and Updates in response.
-func (s *stateMachine) receive(p packet, src net.Addr, addrs []net.Addr) ([]packet, []Update) {
-	if s.addrs[p.remoteID] == nil {
+func (s *stateMachine) receive(p packet, src netip.AddrPort, addrs []netip.AddrPort) ([]packet, []Update) {
+	if s.addrs[p.remoteID] == (netip.AddrPort{}) {
 		// First contact from sender
 		s.addrs[p.remoteID] = src
 	}
 	// Update address records
 	for i, addr := range addrs {
 		id := p.Msgs[i].ID
-		if id == s.id || addr == nil {
+		if id == s.id || addr == (netip.AddrPort{}) {
 			continue
 		}
 		s.addrs[id] = addr
@@ -208,12 +208,12 @@ func (s *stateMachine) processPacketType(p packet) []packet {
 	return nil
 }
 
-func (s *stateMachine) getAddrs(p packet) (dst net.Addr, addrs []net.Addr) {
+func (s *stateMachine) getAddrs(p packet) (dst netip.AddrPort, addrs []netip.AddrPort) {
 	dst = s.addrs[p.remoteID]
-	if dst == nil {
-		return nil, nil
+	if dst == (netip.AddrPort{}) {
+		return netip.AddrPort{}, nil
 	}
-	addrs = make([]net.Addr, len(p.Msgs))
+	addrs = make([]netip.AddrPort, len(p.Msgs))
 	for i, m := range p.Msgs {
 		addrs[i] = s.addrs[m.ID]
 	}

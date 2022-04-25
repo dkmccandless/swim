@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/rand"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -20,7 +21,7 @@ const (
 type Update struct {
 	ID       string
 	IsMember bool
-	Addr     net.Addr
+	Addr     netip.AddrPort
 }
 
 // A Node is a network node participating in the SWIM protocol.
@@ -29,13 +30,13 @@ type Node struct {
 	fsm *stateMachine
 
 	id      id // copy of fsm.id
-	conn    net.PacketConn
+	conn    *net.UDPConn
 	updates bufchan.Chan[Update]
 }
 
 // Start creates a new Node and starts running the SWIM protocol on it.
 func Start() (*Node, error) {
-	conn, err := net.ListenPacket("udp", ":0")
+	conn, err := net.ListenUDP("udp", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -85,15 +86,15 @@ func (n *Node) timeout() []packet {
 
 // Join connects n to a remote node. This is typically used to connect a new
 // node to an existing network.
-func (n *Node) Join(remoteAddr net.Addr) {
+func (n *Node) Join(remote netip.AddrPort) {
 	n.mu.Lock()
 	p := packet{
 		Type: ping,
 		Msgs: []*message{n.fsm.aliveMessage()},
 	}
 	n.mu.Unlock()
-	b := encode(n.id, p, []net.Addr{nil})
-	if _, err := n.conn.WriteTo(b, remoteAddr); err != nil {
+	b := encode(n.id, p, []netip.AddrPort{{}})
+	if _, err := n.conn.WriteToUDPAddrPort(b, remote); err != nil {
 		if errors.Is(err, net.ErrClosed) {
 			return
 		}
@@ -105,11 +106,11 @@ func (n *Node) Join(remoteAddr net.Addr) {
 func (n *Node) send(ps []packet) {
 	for _, p := range ps {
 		dst, addrs := n.getAddrs(p)
-		if dst == nil {
+		if dst == (netip.AddrPort{}) {
 			continue
 		}
 		b := encode(n.id, p, addrs)
-		if _, err := n.conn.WriteTo(b, dst); err != nil {
+		if _, err := n.conn.WriteToUDPAddrPort(b, dst); err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return
 			}
@@ -119,7 +120,7 @@ func (n *Node) send(ps []packet) {
 	}
 }
 
-func (n *Node) getAddrs(p packet) (dst net.Addr, addrs []net.Addr) {
+func (n *Node) getAddrs(p packet) (dst netip.AddrPort, addrs []netip.AddrPort) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.fsm.getAddrs(p)
@@ -128,11 +129,12 @@ func (n *Node) getAddrs(p packet) (dst net.Addr, addrs []net.Addr) {
 func (n *Node) runReceive() {
 	for {
 		b := make([]byte, 1<<16)
-		len, addr, err := n.conn.ReadFrom(b)
+		len, addr, err := n.conn.ReadFromUDPAddrPort(b)
 		if err != nil {
 			time.Sleep(time.Second)
 			continue
 		}
+
 		p, addrs, ok := decode(b[:len])
 		if !ok {
 			continue
@@ -143,7 +145,7 @@ func (n *Node) runReceive() {
 	}
 }
 
-func (n *Node) receive(p packet, src net.Addr, addrs []net.Addr) ([]packet, []Update) {
+func (n *Node) receive(p packet, src netip.AddrPort, addrs []netip.AddrPort) ([]packet, []Update) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.fsm.receive(p, src, addrs)
@@ -165,50 +167,30 @@ func (n *Node) ID() string {
 	return string(n.id)
 }
 
-// LocalAddr returns the local network address, if known. It calls the
-// underlying PacketConn's LocalAddr method.
-func (n *Node) LocalAddr() net.Addr {
-	return n.conn.LocalAddr()
+// LocalAddr returns the local network address.
+func (n *Node) LocalAddr() netip.AddrPort {
+	return n.conn.LocalAddr().(*net.UDPAddr).AddrPort()
 }
 
 type envelope struct {
 	FromID id
 	P      packet
-	Addrs  []string
+	Addrs  []netip.AddrPort
 }
 
-func encode(id id, p packet, addrs []net.Addr) []byte {
-	envAddrs := make([]string, len(addrs))
-	for i, a := range addrs {
-		if a == nil {
-			continue
-		}
-		envAddrs[i] = a.String()
-	}
-	b, err := json.Marshal(envelope{id, p, envAddrs})
+func encode(id id, p packet, addrs []netip.AddrPort) []byte {
+	b, err := json.Marshal(envelope{id, p, addrs})
 	if err != nil {
 		panic(err)
 	}
 	return b
 }
 
-func decode(b []byte) (packet, []net.Addr, bool) {
+func decode(b []byte) (packet, []netip.AddrPort, bool) {
 	var e envelope
 	err := json.Unmarshal(b, &e)
-	addrs := make([]net.Addr, len(e.Addrs))
-	for i, s := range e.Addrs {
-		if s == "" {
-			continue
-		}
-		a, err := net.ResolveUDPAddr("udp", s)
-		if err != nil {
-			// TODO: better error handling
-			panic(err)
-		}
-		addrs[i] = a
-	}
 	e.P.remoteID = e.FromID
-	return e.P, addrs, err == nil
+	return e.P, e.Addrs, err == nil
 }
 
 func stoppedTimer() *time.Timer {
