@@ -36,11 +36,7 @@ type Node struct {
 
 // Start creates a new Node and starts running the SWIM protocol on it.
 func Start() (*Node, error) {
-	addr, err := net.ResolveUDPAddr("udp", ":0")
-	if err != nil {
-		return nil, err
-	}
-	conn, err := net.ListenUDP("udp", addr)
+	conn, err := net.ListenUDP("udp", nil)
 	if err != nil {
 		return nil, err
 	}
