@@ -72,7 +72,6 @@ func newStateMachine() *stateMachine {
 		maxMsgs:   6, // TODO: revisit guaranteed MTU constraint
 	}
 	s.mq = newMessageQueue(func() int { return len(s.ml.members) + 1 })
-	s.mq.update(s.aliveMessage())
 	return s
 }
 
