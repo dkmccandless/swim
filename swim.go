@@ -105,12 +105,11 @@ func (n *Node) Join(remote netip.AddrPort) {
 
 func (n *Node) send(ps []packet) {
 	for _, p := range ps {
-		dst := n.getAddr(p)
-		if dst == (netip.AddrPort{}) {
+		if p.remoteAddr == (netip.AddrPort{}) {
 			continue
 		}
 		b := encode(n.id, p)
-		if _, err := n.conn.WriteToUDPAddrPort(b, dst); err != nil {
+		if _, err := n.conn.WriteToUDPAddrPort(b, p.remoteAddr); err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return
 			}
@@ -118,12 +117,6 @@ func (n *Node) send(ps []packet) {
 			panic(err)
 		}
 	}
-}
-
-func (n *Node) getAddr(p packet) netip.AddrPort {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	return n.fsm.getAddr(p)
 }
 
 func (n *Node) runReceive() {
@@ -139,16 +132,17 @@ func (n *Node) runReceive() {
 		if !ok {
 			continue
 		}
-		ps, us := n.receive(p, addr)
+		p.remoteAddr = addr
+		ps, us := n.receive(p)
 		n.sendUpdates(us)
 		n.send(ps)
 	}
 }
 
-func (n *Node) receive(p packet, src netip.AddrPort) ([]packet, []Update) {
+func (n *Node) receive(p packet) ([]packet, []Update) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	return n.fsm.receive(p, src)
+	return n.fsm.receive(p)
 }
 
 func (n *Node) sendUpdates(us []Update) {

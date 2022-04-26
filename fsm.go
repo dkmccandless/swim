@@ -38,10 +38,11 @@ const (
 
 // A packet represents a network packet.
 type packet struct {
-	Type     packetType
-	remoteID id
-	Target   id // for ping requests
-	Msgs     []*message
+	Type       packetType
+	remoteID   id
+	remoteAddr netip.AddrPort
+	Target     id // for ping requests
+	Msgs       []*message
 }
 
 // A status describes a node's membership status.
@@ -137,10 +138,10 @@ func (s *stateMachine) timeout() []packet {
 
 // receive processes an incoming packet and produces any necessary outgoing
 // packets and Updates in response.
-func (s *stateMachine) receive(p packet, src netip.AddrPort) ([]packet, []Update) {
+func (s *stateMachine) receive(p packet) ([]packet, []Update) {
 	if s.addrs[p.remoteID] == (netip.AddrPort{}) {
 		// First contact from sender
-		s.addrs[p.remoteID] = src
+		s.addrs[p.remoteID] = p.remoteAddr
 	}
 	// Update address records and populate empty message addresses
 	for i, m := range p.Msgs {
@@ -148,7 +149,7 @@ func (s *stateMachine) receive(p packet, src netip.AddrPort) ([]packet, []Update
 		case m.ID == s.id:
 			continue
 		case m.Addr == netip.AddrPort{}:
-			p.Msgs[i].Addr = src
+			p.Msgs[i].Addr = p.remoteAddr
 		default:
 			s.addrs[m.ID] = m.Addr
 		}
@@ -211,10 +212,6 @@ func (s *stateMachine) processPacketType(p packet) []packet {
 	return nil
 }
 
-func (s *stateMachine) getAddr(p packet) netip.AddrPort {
-	return s.addrs[p.remoteID]
-}
-
 func (s *stateMachine) makePing(dst id) packet {
 	return s.makePacket(ping, dst, dst)
 }
@@ -243,19 +240,21 @@ func (s *stateMachine) makePacket(typ packetType, dst, target id) packet {
 		msgs = s.mq.get(s.maxMsgs)
 	}
 	return packet{
-		Type:     typ,
-		remoteID: dst,
-		Target:   target,
-		Msgs:     msgs,
+		Type:       typ,
+		remoteID:   dst,
+		remoteAddr: s.addrs[dst],
+		Target:     target,
+		Msgs:       msgs,
 	}
 }
 
 // makeMessagePing returns a ping that delivers a single message to its subject.
 func (s *stateMachine) makeMessagePing(m *message) packet {
 	return packet{
-		Type:     ping,
-		remoteID: m.ID,
-		Msgs:     []*message{m},
+		Type:       ping,
+		remoteID:   m.ID,
+		remoteAddr: s.addrs[m.ID],
+		Msgs:       []*message{m},
 	}
 }
 
