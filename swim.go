@@ -31,7 +31,7 @@ type Node struct {
 	id       id // copy of fsm.id
 	conn     *net.UDPConn
 	updates  bufchan.Chan[Update]
-	doneTick chan struct{}
+	stopTick chan struct{}
 }
 
 // Start creates a new Node and starts running the SWIM protocol on it.
@@ -46,7 +46,7 @@ func Start() (*Node, error) {
 		id:       fsm.id,
 		conn:     conn,
 		updates:  bufchan.Make[Update](),
-		doneTick: make(chan struct{}),
+		stopTick: make(chan struct{}),
 	}
 	go n.runReceive()
 	go n.runTick()
@@ -68,7 +68,7 @@ func (n *Node) runTick() {
 			n.send(n.tick())
 		case <-pingTimer.C:
 			n.send(n.timeout())
-		case <-n.doneTick:
+		case <-n.stopTick:
 			return
 		}
 	}
@@ -119,7 +119,7 @@ func (n *Node) writeTo(p packet, addr netip.AddrPort) error {
 }
 
 func (n *Node) runReceive() {
-	defer close(n.doneTick)
+	defer close(n.stopTick)
 	for {
 		b := make([]byte, 1<<16)
 		len, addr, err := n.conn.ReadFromUDPAddrPort(b)
