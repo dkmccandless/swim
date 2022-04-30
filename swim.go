@@ -2,7 +2,6 @@ package swim
 
 import (
 	"encoding/json"
-	"errors"
 	"math/rand"
 	"net"
 	"net/netip"
@@ -29,9 +28,10 @@ type Node struct {
 	mu  sync.Mutex // protects the following fields
 	fsm *stateMachine
 
-	id      id // copy of fsm.id
-	conn    *net.UDPConn
-	updates bufchan.Chan[Update]
+	id       id // copy of fsm.id
+	conn     *net.UDPConn
+	updates  bufchan.Chan[Update]
+	stopTick chan struct{}
 }
 
 // Start creates a new Node and starts running the SWIM protocol on it.
@@ -42,10 +42,11 @@ func Start() (*Node, error) {
 	}
 	fsm := newStateMachine()
 	n := &Node{
-		fsm:     fsm,
-		id:      fsm.id,
-		conn:    conn,
-		updates: bufchan.Make[Update](),
+		fsm:      fsm,
+		id:       fsm.id,
+		conn:     conn,
+		updates:  bufchan.Make[Update](),
+		stopTick: make(chan struct{}),
 	}
 	go n.runReceive()
 	go n.runTick()
@@ -53,6 +54,7 @@ func Start() (*Node, error) {
 }
 
 func (n *Node) runTick() {
+	defer close(n.updates.Send())
 	periodTimer := time.NewTimer(0)
 	pingTimer := stoppedTimer()
 	for {
@@ -66,6 +68,8 @@ func (n *Node) runTick() {
 			n.send(n.tick())
 		case <-pingTimer.C:
 			n.send(n.timeout())
+		case <-n.stopTick:
+			return
 		}
 	}
 }
@@ -86,51 +90,49 @@ func (n *Node) timeout() []packet {
 
 // Join connects n to a remote node. This is typically used to connect a new
 // node to an existing network.
-func (n *Node) Join(remote netip.AddrPort) {
+func (n *Node) Join(remote netip.AddrPort) error {
 	n.mu.Lock()
 	p := packet{
 		Type: ping,
 		Msgs: []*message{n.fsm.aliveMessage()},
 	}
 	n.mu.Unlock()
-	b := encode(n.id, p)
-	if _, err := n.conn.WriteToUDPAddrPort(b, remote); err != nil {
-		if errors.Is(err, net.ErrClosed) {
-			return
-		}
-		// TODO: better error handling
-		panic(err)
-	}
+	return n.writeTo(p, remote)
 }
 
 func (n *Node) send(ps []packet) {
 	for _, p := range ps {
-		b := encode(n.id, p)
-		if _, err := n.conn.WriteToUDPAddrPort(b, p.remoteAddr); err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return
-			}
-			// TODO: better error handling
-			panic(err)
+		if err := n.writeTo(p, p.remoteAddr); err != nil {
+			return
 		}
 	}
 }
 
+// writeTo writes p to addr.
+func (n *Node) writeTo(p packet, addr netip.AddrPort) error {
+	b, err := json.Marshal(envelope{n.id, p})
+	if err != nil {
+		panic(err)
+	}
+	_, err = n.conn.WriteToUDPAddrPort(b, addr)
+	return err
+}
+
 func (n *Node) runReceive() {
+	defer close(n.stopTick)
 	for {
 		b := make([]byte, 1<<16)
 		len, addr, err := n.conn.ReadFromUDPAddrPort(b)
 		if err != nil {
-			time.Sleep(time.Second)
+			return
+		}
+		var e envelope
+		if err := json.Unmarshal(b[:len], &e); err != nil {
 			continue
 		}
-
-		p, ok := decode(b[:len])
-		if !ok {
-			continue
-		}
-		p.remoteAddr = addr
-		ps, us := n.receive(p)
+		e.P.remoteID = e.FromID
+		e.P.remoteAddr = addr
+		ps, us := n.receive(e.P)
 		n.sendUpdates(us)
 		n.send(ps)
 	}
@@ -166,21 +168,6 @@ func (n *Node) LocalAddr() netip.AddrPort {
 type envelope struct {
 	FromID id
 	P      packet
-}
-
-func encode(id id, p packet) []byte {
-	b, err := json.Marshal(envelope{id, p})
-	if err != nil {
-		panic(err)
-	}
-	return b
-}
-
-func decode(b []byte) (packet, bool) {
-	var e envelope
-	err := json.Unmarshal(b, &e)
-	e.P.remoteID = e.FromID
-	return e.P, err == nil
 }
 
 func stoppedTimer() *time.Timer {
