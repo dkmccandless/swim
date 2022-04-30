@@ -137,8 +137,9 @@ func (s *stateMachine) timeout() []packet {
 }
 
 // receive processes an incoming packet and produces any necessary outgoing
-// packets and Updates in response.
-func (s *stateMachine) receive(p packet) ([]packet, []Update) {
+// packets and Updates in response. The boolean return value reports whether
+// the stateMachine can continue participating in the protocol.
+func (s *stateMachine) receive(p packet) ([]packet, []Update, bool) {
 	if s.addrs[p.remoteID] == (netip.AddrPort{}) {
 		// First contact from sender
 		s.addrs[p.remoteID] = p.remoteAddr
@@ -157,7 +158,11 @@ func (s *stateMachine) receive(p packet) ([]packet, []Update) {
 
 	var us []Update
 	for _, m := range p.Msgs {
-		if u := s.processMsg(m); u != nil {
+		u, ok := s.processMsg(m)
+		if !ok {
+			return nil, nil, false
+		}
+		if u != nil {
 			id := id(u.ID)
 			u.Addr = s.addrs[id]
 			if !u.IsMember {
@@ -166,10 +171,13 @@ func (s *stateMachine) receive(p packet) ([]packet, []Update) {
 			us = append(us, *u)
 		}
 	}
-	return s.processPacketType(p), us
+	return s.processPacketType(p), us, true
 }
 
-func (s *stateMachine) processMsg(m *message) *Update {
+// processMsg returns an Update if m results in a change of membership, or else
+// nil. The boolean return value is false if the stateMachine has been declared
+// failed, and true otherwise.
+func (s *stateMachine) processMsg(m *message) (*Update, bool) {
 	if m.ID == s.id {
 		switch m.Type {
 		case suspected:
@@ -178,15 +186,15 @@ func (s *stateMachine) processMsg(m *message) *Update {
 				s.mq.update(s.aliveMessage())
 			}
 		case failed:
-			// TODO
+			return nil, false
 		}
-		return nil
+		return nil, true
 	}
 	if !supersedes(m, s.ml.members[m.ID]) {
-		return nil
+		return nil, true
 	}
 	s.mq.update(m)
-	return s.ml.update(m)
+	return s.ml.update(m), true
 }
 
 func (s *stateMachine) processPacketType(p packet) []packet {
