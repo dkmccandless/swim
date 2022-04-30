@@ -105,9 +105,9 @@ func (s *stateMachine) tick() ([]packet, []Update) {
 		id := id(u.ID)
 		u.Addr = s.addrs[id]
 		m := s.failedMessage(id)
-		delete(s.addrs, id)
 		s.mq.update(m)
 		ps = append(ps, s.makeMessagePing(m))
+		delete(s.addrs, id)
 	}
 
 	if s.pingTarget == "" {
