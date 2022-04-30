@@ -102,9 +102,6 @@ func (n *Node) Join(remote netip.AddrPort) error {
 
 func (n *Node) send(ps []packet) {
 	for _, p := range ps {
-		if p.remoteAddr == (netip.AddrPort{}) {
-			continue
-		}
 		if err := n.writeTo(p, p.remoteAddr); err != nil {
 			return
 		}
