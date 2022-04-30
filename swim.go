@@ -132,13 +132,16 @@ func (n *Node) runReceive() {
 		}
 		e.P.remoteID = e.FromID
 		e.P.remoteAddr = addr
-		ps, us := n.receive(e.P)
+		ps, us, ok := n.receive(e.P)
+		if !ok {
+			return
+		}
 		n.sendUpdates(us)
 		n.send(ps)
 	}
 }
 
-func (n *Node) receive(p packet) ([]packet, []Update) {
+func (n *Node) receive(p packet) ([]packet, []Update, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.fsm.receive(p)
@@ -150,7 +153,8 @@ func (n *Node) sendUpdates(us []Update) {
 	}
 }
 
-// Updates returns a channel from which Updates can be received.
+// Updates returns a channel from which Updates can be received. The channel is
+// closed when n ceases participation in the protocol.
 func (n *Node) Updates() <-chan Update {
 	return n.updates.Receive()
 }
