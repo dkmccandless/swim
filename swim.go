@@ -105,9 +105,6 @@ func (n *Node) Join(remote netip.AddrPort) {
 
 func (n *Node) send(ps []packet) {
 	for _, p := range ps {
-		if p.remoteAddr == (netip.AddrPort{}) {
-			continue
-		}
 		b := encode(n.id, p)
 		if _, err := n.conn.WriteToUDPAddrPort(b, p.remoteAddr); err != nil {
 			if errors.Is(err, net.ErrClosed) {
