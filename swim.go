@@ -154,7 +154,7 @@ func (n *Node) sendUpdates(us []Update) {
 }
 
 // Updates returns a channel from which Updates can be received. The channel is
-// closed when the Node ceases participation in the protocol.
+// closed when n ceases participation in the protocol.
 func (n *Node) Updates() <-chan Update {
 	return n.updates.Receive()
 }
