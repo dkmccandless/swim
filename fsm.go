@@ -38,10 +38,11 @@ const (
 
 // A packet represents a network packet.
 type packet struct {
-	Type     packetType
-	remoteID id
-	Target   id // for ping requests
-	Msgs     []*message
+	Type       packetType
+	remoteID   id
+	remoteAddr netip.AddrPort
+	Target     id // for ping requests
+	Msgs       []*message
 }
 
 // A status describes a node's membership status.
@@ -58,6 +59,7 @@ type message struct {
 	Type        status
 	ID          id
 	Incarnation int
+	Addr        netip.AddrPort
 }
 
 func newStateMachine() *stateMachine {
@@ -102,10 +104,10 @@ func (s *stateMachine) tick() ([]packet, []Update) {
 	for _, u := range failed {
 		id := id(u.ID)
 		u.Addr = s.addrs[id]
-		delete(s.addrs, id)
 		m := s.failedMessage(id)
 		s.mq.update(m)
 		ps = append(ps, s.makeMessagePing(m))
+		delete(s.addrs, id)
 	}
 
 	if s.pingTarget == "" {
@@ -136,18 +138,21 @@ func (s *stateMachine) timeout() []packet {
 
 // receive processes an incoming packet and produces any necessary outgoing
 // packets and Updates in response.
-func (s *stateMachine) receive(p packet, src netip.AddrPort, addrs []netip.AddrPort) ([]packet, []Update) {
+func (s *stateMachine) receive(p packet) ([]packet, []Update) {
 	if s.addrs[p.remoteID] == (netip.AddrPort{}) {
 		// First contact from sender
-		s.addrs[p.remoteID] = src
+		s.addrs[p.remoteID] = p.remoteAddr
 	}
-	// Update address records
-	for i, addr := range addrs {
-		id := p.Msgs[i].ID
-		if id == s.id || addr == (netip.AddrPort{}) {
+	// Update address records and populate empty message addresses
+	for i, m := range p.Msgs {
+		switch {
+		case m.ID == s.id:
 			continue
+		case m.Addr == netip.AddrPort{}:
+			p.Msgs[i].Addr = p.remoteAddr
+		default:
+			s.addrs[m.ID] = m.Addr
 		}
-		s.addrs[id] = addr
 	}
 
 	var us []Update
@@ -207,18 +212,6 @@ func (s *stateMachine) processPacketType(p packet) []packet {
 	return nil
 }
 
-func (s *stateMachine) getAddrs(p packet) (dst netip.AddrPort, addrs []netip.AddrPort) {
-	dst = s.addrs[p.remoteID]
-	if dst == (netip.AddrPort{}) {
-		return netip.AddrPort{}, nil
-	}
-	addrs = make([]netip.AddrPort, len(p.Msgs))
-	for i, m := range p.Msgs {
-		addrs[i] = s.addrs[m.ID]
-	}
-	return dst, addrs
-}
-
 func (s *stateMachine) makePing(dst id) packet {
 	return s.makePacket(ping, dst, dst)
 }
@@ -247,19 +240,21 @@ func (s *stateMachine) makePacket(typ packetType, dst, target id) packet {
 		msgs = s.mq.get(s.maxMsgs)
 	}
 	return packet{
-		Type:     typ,
-		remoteID: dst,
-		Target:   target,
-		Msgs:     msgs,
+		Type:       typ,
+		remoteID:   dst,
+		remoteAddr: s.addrs[dst],
+		Target:     target,
+		Msgs:       msgs,
 	}
 }
 
 // makeMessagePing returns a ping that delivers a single message to its subject.
 func (s *stateMachine) makeMessagePing(m *message) packet {
 	return packet{
-		Type:     ping,
-		remoteID: m.ID,
-		Msgs:     []*message{m},
+		Type:       ping,
+		remoteID:   m.ID,
+		remoteAddr: s.addrs[m.ID],
+		Msgs:       []*message{m},
 	}
 }
 
@@ -278,6 +273,7 @@ func (s *stateMachine) suspectedMessage(id id) *message {
 		Type:        suspected,
 		ID:          id,
 		Incarnation: s.ml.members[id].Incarnation,
+		Addr:        s.addrs[id],
 	}
 }
 
@@ -286,6 +282,7 @@ func (s *stateMachine) failedMessage(id id) *message {
 	return &message{
 		Type: failed,
 		ID:   id,
+		Addr: s.addrs[id],
 	}
 }
 
