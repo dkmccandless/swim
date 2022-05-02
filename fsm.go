@@ -1,12 +1,9 @@
 package swim
 
 import (
-	"encoding/base32"
 	"math/rand"
 	"net/netip"
 )
-
-type id string
 
 // A stateMachine is a finite state machine that implements the SWIM
 // protocol.
@@ -315,12 +312,4 @@ func supersedes(a, b *message) bool {
 		return a.Type == suspected && b.Type == alive
 	}
 	return a.Incarnation > b.Incarnation
-}
-
-func randID() id {
-	b := make([]byte, 15)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
-	return id(base32.StdEncoding.EncodeToString(b))
 }
