@@ -107,47 +107,6 @@ func TestNext(t *testing.T) {
 	}
 }
 
-func TestRemove(t *testing.T) {
-	for _, tt := range []struct {
-		o       *Order[string]
-		value   string
-		want    *Order[string]
-		removed bool
-	}{
-		{
-			&Order[string]{[]string{}, 0},
-			"a",
-			&Order[string]{[]string{}, 0},
-			false,
-		},
-		{
-			&Order[string]{[]string{"a"}, 1},
-			"b",
-			&Order[string]{[]string{"a"}, 1},
-			false,
-		},
-		{
-			&Order[string]{[]string{"a", "a"}, 2},
-			"a",
-			&Order[string]{[]string{"a"}, 1},
-			true,
-		},
-	} {
-		got := clone(tt.o)
-		removed := got.Remove(tt.value)
-		if removed != tt.removed {
-			t.Errorf("%+v.Remove(%q): %v != %v",
-				tt.o, tt.value, removed, tt.removed,
-			)
-		}
-		if !reflect.DeepEqual(got, tt.want) {
-			t.Errorf("%+v.Remove(%q): %+v != %+v",
-				tt.o, tt.value, got, tt.want,
-			)
-		}
-	}
-}
-
 var removeTests = []struct {
 	o     *Order[string]
 	wants []*Order[string]

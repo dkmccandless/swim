@@ -1,7 +1,6 @@
 package swim
 
 import (
-	"math/rand"
 	"net/netip"
 )
 
@@ -120,15 +119,8 @@ func (s *stateMachine) timeout() []packet {
 		return nil
 	}
 	var ps []packet
-	for _, i := range rand.Perm(len(s.ml.order)) {
-		id := s.ml.order[i]
-		if id == s.pingTarget {
-			continue
-		}
+	for _, id := range s.ml.o.Rand(s.nPingReqs, s.pingTarget) {
 		ps = append(ps, s.makePingReq(id, s.pingTarget))
-		if len(ps) == s.nPingReqs {
-			break
-		}
 	}
 	return ps
 }

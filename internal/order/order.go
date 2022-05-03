@@ -44,16 +44,14 @@ func (o *Order[T]) addAt(t T, k int) {
 	}
 }
 
-// Remove removes the first instance of t from the Order, if any, and reports
-// whether the Order contained t.
-func (o *Order[T]) Remove(t T) bool {
+// Remove removes the first instance of t from the Order, if any.
+func (o *Order[T]) Remove(t T) {
 	for i := range o.a {
 		if o.a[i] == t {
 			o.removeAt(i)
-			return true
+			return
 		}
 	}
-	return false
 }
 
 // removeAt removes the element at index k.
@@ -66,6 +64,23 @@ func (o *Order[T]) removeAt(k int) {
 	last := len(o.a) - 1
 	o.swap(k, last)
 	o.a = o.a[:last]
+}
+
+// Rand returns a slice of unique elements besides exclude, chosen at random.
+// If there are at least n such elements, Rand returns n of them, or else all.
+func (o *Order[T]) Rand(n int, exclude T) []T {
+	var ts []T
+	for _, i := range rand.Perm(len(o.a)) {
+		t := o.a[i]
+		if t == exclude {
+			continue
+		}
+		ts = append(ts, t)
+		if len(ts) == n {
+			break
+		}
+	}
+	return ts
 }
 
 func (o *Order[T]) swap(i, j int) {
