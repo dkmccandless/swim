@@ -9,21 +9,25 @@ import (
 // A memberList tracks the membership of other nodes in the network and
 // maintains a round-robin ordering for ping target selection.
 type memberList struct {
-	members     map[id]*message
-	suspects    map[id]int  // number of periods under suspicion
-	uncontacted map[id]bool // ids that have not been sent to
-	removed     map[id]bool // removed ids // TODO: expire old entries by timestamp
+	members  map[id]*profile
+	suspects map[id]int  // number of periods under suspicion
+	removed  map[id]bool // removed ids // TODO: expire old entries by timestamp
 
 	order roundrobinrandom.Order[id]
 }
 
 func newMemberList() *memberList {
 	return &memberList{
-		members:     make(map[id]*message),
-		suspects:    make(map[id]int),
-		uncontacted: make(map[id]bool),
-		removed:     make(map[id]bool),
+		members:  make(map[id]*profile),
+		suspects: make(map[id]int),
+		removed:  make(map[id]bool),
 	}
+}
+
+// A profile contains an ID's membership information.
+type profile struct {
+	incarnation int
+	contacted   bool
 }
 
 // tick begins a new protocol period and returns the ping target and Updates
@@ -41,19 +45,16 @@ func (ml *memberList) tick() (target id, failed []Update) {
 // returns an Update if the membership list changed.
 func (ml *memberList) update(msg *message) *Update {
 	id := msg.ID
-	if ml.removed[id] || !supersedes(msg, ml.members[id]) {
-		return nil
-	}
 	if msg.Type == failed {
 		return ml.remove(id)
 	}
 	var u *Update
 	if !ml.isMember(id) {
-		ml.uncontacted[id] = true
+		ml.members[id] = new(profile)
 		ml.order.Add(id)
 		u = &Update{ID: string(id), IsMember: true}
 	}
-	ml.members[id] = msg
+	ml.members[id].incarnation = msg.Incarnation
 	switch msg.Type {
 	case alive:
 		delete(ml.suspects, id)
@@ -85,4 +86,28 @@ func (ml *memberList) suspicionTimeout() int {
 func (ml *memberList) isMember(id id) bool {
 	_, ok := ml.members[id]
 	return ok
+}
+
+// isSuspect reports whether an id is suspected.
+func (ml *memberList) isSuspect(id id) bool {
+	_, ok := ml.suspects[id]
+	return ok
+}
+
+// isNews reports whether m contains new membership status information.
+func (ml *memberList) isNews(m *message) bool {
+	if m == nil {
+		return false
+	}
+	if !ml.isMember(m.ID) {
+		return !ml.removed[m.ID]
+	}
+	if m.Type == failed {
+		return true
+	}
+	incarnation := ml.members[m.ID].incarnation
+	if m.Incarnation == incarnation {
+		return m.Type == suspected && !ml.isSuspect(m.ID)
+	}
+	return m.Incarnation > incarnation
 }
