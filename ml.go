@@ -2,7 +2,8 @@ package swim
 
 import (
 	"math"
-	"math/rand"
+
+	"github.com/dkmccandless/swim/internal/roundrobinrandom"
 )
 
 // A memberList tracks the membership of other nodes in the network and
@@ -13,8 +14,7 @@ type memberList struct {
 	uncontacted map[id]bool // ids that have not been sent to
 	removed     map[id]bool // removed ids // TODO: expire old entries by timestamp
 
-	order []id
-	i     int
+	order roundrobinrandom.Order[id]
 }
 
 func newMemberList() *memberList {
@@ -34,15 +34,7 @@ func (ml *memberList) tick() (target id, failed []Update) {
 			failed = append(failed, *ml.remove(id))
 		}
 	}
-	if len(ml.order) == 0 {
-		return "", failed
-	}
-	if ml.i = (ml.i + 1) % len(ml.order); ml.i == 0 {
-		rand.Shuffle(len(ml.order), func(i, j int) {
-			ml.order[i], ml.order[j] = ml.order[j], ml.order[i]
-		})
-	}
-	return ml.order[ml.i], failed
+	return ml.order.Next(), failed
 }
 
 // update updates a node's membership status based on a received message and
@@ -77,12 +69,7 @@ func (ml *memberList) add(id id) *Update {
 	}
 	ml.members[id] = nil
 	ml.uncontacted[id] = true
-
-	n := len(ml.order)
-	ml.order = append(ml.order, id)
-	k := rand.Intn(len(ml.order))
-	ml.order[k], ml.order[n] = ml.order[n], ml.order[k]
-
+	ml.order.Add(id)
 	return &Update{ID: string(id), IsMember: true}
 }
 
@@ -94,20 +81,7 @@ func (ml *memberList) remove(id id) *Update {
 	delete(ml.members, id)
 	delete(ml.suspects, id)
 	ml.removed[id] = true
-
-	var pos int
-	for pos = range ml.order {
-		if ml.order[pos] == id {
-			break
-		}
-	}
-	if pos > ml.i {
-		ml.order[pos] = ml.order[len(ml.order)-1]
-		ml.order = ml.order[:len(ml.order)-1]
-	} else {
-		ml.order = append(ml.order[:pos], ml.order[pos+1:]...)
-		ml.i--
-	}
+	ml.order.Remove(id)
 	return &Update{ID: string(id), IsMember: false}
 }
 
