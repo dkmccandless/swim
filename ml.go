@@ -3,7 +3,7 @@ package swim
 import (
 	"math"
 
-	"github.com/dkmccandless/swim/internal/order"
+	"github.com/dkmccandless/swim/internal/roundrobinrandom"
 )
 
 // A memberList tracks the membership of other nodes in the network and
@@ -14,7 +14,7 @@ type memberList struct {
 	uncontacted map[id]bool // ids that have not been sent to
 	removed     map[id]bool // removed ids // TODO: expire old entries by timestamp
 
-	order order.Order[id]
+	order roundrobinrandom.Order[id]
 }
 
 func newMemberList() *memberList {

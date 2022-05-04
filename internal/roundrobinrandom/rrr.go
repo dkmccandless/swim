@@ -1,4 +1,4 @@
-package order
+package roundrobinrandom
 
 import "math/rand"
 
