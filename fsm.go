@@ -119,7 +119,7 @@ func (s *stateMachine) timeout() []packet {
 		return nil
 	}
 	var ps []packet
-	for _, id := range s.ml.o.Rand(s.nPingReqs, s.pingTarget) {
+	for _, id := range s.ml.order.IndependentSample(s.nPingReqs, s.pingTarget) {
 		ps = append(ps, s.makePingReq(id, s.pingTarget))
 	}
 	return ps

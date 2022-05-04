@@ -14,7 +14,7 @@ type memberList struct {
 	uncontacted map[id]bool // ids that have not been sent to
 	removed     map[id]bool // removed ids // TODO: expire old entries by timestamp
 
-	o order.Order[id]
+	order order.Order[id]
 }
 
 func newMemberList() *memberList {
@@ -34,7 +34,7 @@ func (ml *memberList) tick() (target id, failed []Update) {
 			failed = append(failed, *ml.remove(id))
 		}
 	}
-	return ml.o.Next(), failed
+	return ml.order.Next(), failed
 }
 
 // update updates a node's membership status based on a received message and
@@ -69,7 +69,7 @@ func (ml *memberList) add(id id) *Update {
 	}
 	ml.members[id] = nil
 	ml.uncontacted[id] = true
-	ml.o.Add(id)
+	ml.order.Add(id)
 	return &Update{ID: string(id), IsMember: true}
 }
 
@@ -81,7 +81,7 @@ func (ml *memberList) remove(id id) *Update {
 	delete(ml.members, id)
 	delete(ml.suspects, id)
 	ml.removed[id] = true
-	ml.o.Remove(id)
+	ml.order.Remove(id)
 	return &Update{ID: string(id), IsMember: false}
 }
 

@@ -66,9 +66,10 @@ func (o *Order[T]) removeAt(k int) {
 	o.a = o.a[:last]
 }
 
-// Rand returns a slice of unique elements besides exclude, chosen at random.
-// If there are at least n such elements, Rand returns n of them, or else all.
-func (o *Order[T]) Rand(n int, exclude T) []T {
+// IndependentSample returns a slice of unique elements besides exclude, chosen
+// at random. If there are at least n such elements, IndependentSample returns
+// n of them, or else all of them.
+func (o *Order[T]) IndependentSample(n int, exclude T) []T {
 	var ts []T
 	for _, i := range rand.Perm(len(o.a)) {
 		t := o.a[i]
