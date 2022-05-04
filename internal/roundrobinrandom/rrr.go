@@ -1,3 +1,9 @@
+// Package roundrobinrandom implements a randomized round-based ordering type.
+//
+// Each element in an Order is visited in random sequence, once per round
+// (possibly excluding the round it is added to the Order). Therefore, in an
+// Order of n elements, successive visits to the same element will occur at
+// intervals of at most 2n-1 calls to Next.
 package roundrobinrandom
 
 import "math/rand"
@@ -10,8 +16,8 @@ type Order[T comparable] struct {
 	next int
 }
 
-// Next returns the next value in the Order, shuffling first if necessary. It
-// returns the zero value of type T if the Order is empty.
+// Next returns the next value in the Order, shuffling first if necessary. If
+// the Order is empty, it returns the zero value of type T.
 func (o *Order[T]) Next() T {
 	var t T
 	if len(o.a) == 0 {
