@@ -41,36 +41,26 @@ func (ml *memberList) tick() (target id, failed []Update) {
 // returns an Update if the membership list changed.
 func (ml *memberList) update(msg *message) *Update {
 	id := msg.ID
-	if !supersedes(msg, ml.members[id]) {
+	if ml.removed[id] || !supersedes(msg, ml.members[id]) {
 		return nil
 	}
-	var u *Update
-	switch msg.Type {
-	case alive:
-		u = ml.add(id)
-		ml.members[id] = msg
-		delete(ml.suspects, id)
-	case suspected:
-		u = ml.add(id)
-		ml.members[id] = msg
-		ml.suspects[id] = 0
-	case failed:
+	if msg.Type == failed {
 		return ml.remove(id)
 	}
-	return u
-}
-
-// add adds a new id to the list, inserts it into a random position in the
-// order, and returns an Update. If the id is a current or former member, add
-// returns nil instead.
-func (ml *memberList) add(id id) *Update {
-	if ml.isMember(id) || ml.removed[id] {
-		return nil
+	var u *Update
+	if !ml.isMember(id) {
+		ml.uncontacted[id] = true
+		ml.order.Add(id)
+		u = &Update{ID: string(id), IsMember: true}
 	}
-	ml.members[id] = nil
-	ml.uncontacted[id] = true
-	ml.order.Add(id)
-	return &Update{ID: string(id), IsMember: true}
+	ml.members[id] = msg
+	switch msg.Type {
+	case alive:
+		delete(ml.suspects, id)
+	case suspected:
+		ml.suspects[id] = 0
+	}
+	return u
 }
 
 // remove removes an id from the list and returns an Update if it was a member.
