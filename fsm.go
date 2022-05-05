@@ -1,7 +1,10 @@
 package swim
 
 import (
+	"math"
 	"net/netip"
+
+	"github.com/dkmccandless/swim/internal/roundrobinrandom"
 )
 
 // A stateMachine is a finite state machine that implements the SWIM
@@ -11,8 +14,14 @@ type stateMachine struct {
 	incarnation int
 
 	addrs map[id]netip.AddrPort
-	ml    *memberList
-	mq    *messageQueue
+
+	members  map[id]*profile
+	suspects map[id]int  // number of periods under suspicion
+	removed  map[id]bool // removed ids // TODO: expire old entries by timestamp
+
+	order roundrobinrandom.Order[id]
+
+	mq *messageQueue
 
 	pingTarget id
 	gotAck     bool
@@ -58,18 +67,27 @@ type message struct {
 	Addr        netip.AddrPort
 }
 
+// A profile contains an ID's membership information.
+type profile struct {
+	incarnation int
+	contacted   bool
+}
+
 func newStateMachine() *stateMachine {
 	s := &stateMachine{
 		id: randID(),
 
 		addrs: make(map[id]netip.AddrPort),
-		ml:    newMemberList(),
+
+		members:  make(map[id]*profile),
+		suspects: make(map[id]int),
+		removed:  make(map[id]bool),
 
 		pingReqs:  make(map[id]id),
 		nPingReqs: 2, // TODO: scale according to permissible false positive probability
 		maxMsgs:   6, // TODO: revisit guaranteed MTU constraint
 	}
-	s.mq = newMessageQueue(func() int { return len(s.ml.members) + 1 })
+	s.mq = newMessageQueue(func() int { return len(s.members) + 1 })
 	return s
 }
 
@@ -77,35 +95,35 @@ func newStateMachine() *stateMachine {
 // notify any members declared suspected or failed and corresponding
 // Updates.
 func (s *stateMachine) tick() ([]packet, []Update) {
-	if len(s.ml.members) == 0 {
-		return nil, nil
-	}
-	s.pingReqs = map[id]id{}
 	var ps []packet
 
-	// Handle expired ping target
-	if !s.gotAck && s.ml.isMember(s.pingTarget) {
-		// Avoid resetting an existing suspicion count
-		s.ml.suspects[s.pingTarget] = s.ml.suspects[s.pingTarget]
+	var failed []Update
+	for id := range s.suspects {
+		if s.suspects[id]++; s.suspects[id] >= s.suspicionTimeout() {
+			// Suspicion timeout
+			m := s.failedMessage(id)
+			s.mq.update(m)
+			ps = append(ps, s.makeMessagePing(m))
+			u := s.remove(id)
+			u.Addr = s.addrs[id]
+			failed = append(failed, *u)
+			delete(s.addrs, id)
+		}
+	}
+
+	if !s.gotAck && s.isMember(s.pingTarget) {
+		// Expired ping target
+		if !s.isSuspect(s.pingTarget) {
+			s.suspects[s.pingTarget] = 0
+		}
 		m := s.suspectedMessage(s.pingTarget)
 		s.mq.update(m)
 		ps = append(ps, s.makeMessagePing(m))
 	}
 
-	var failed []Update
-	s.pingTarget, failed = s.ml.tick()
+	s.pingTarget = s.order.Next()
 	s.gotAck = false
-
-	// Handle suspicion timeouts
-	for _, u := range failed {
-		id := id(u.ID)
-		u.Addr = s.addrs[id]
-		m := s.failedMessage(id)
-		s.mq.update(m)
-		ps = append(ps, s.makeMessagePing(m))
-		delete(s.addrs, id)
-	}
-
+	s.pingReqs = map[id]id{}
 	if s.pingTarget == "" {
 		return ps, failed
 	}
@@ -115,11 +133,11 @@ func (s *stateMachine) tick() ([]packet, []Update) {
 // timeout produces ping requests if an ack has not been received from the
 // ping target, or else nil.
 func (s *stateMachine) timeout() []packet {
-	if s.gotAck || !s.ml.isMember(s.pingTarget) {
+	if s.gotAck || !s.isMember(s.pingTarget) {
 		return nil
 	}
 	var ps []packet
-	for _, id := range s.ml.order.IndependentSample(s.nPingReqs, s.pingTarget) {
+	for _, id := range s.order.IndependentSample(s.nPingReqs, s.pingTarget) {
 		ps = append(ps, s.makePingReq(id, s.pingTarget))
 	}
 	return ps
@@ -129,7 +147,7 @@ func (s *stateMachine) timeout() []packet {
 // packets and Updates in response. The boolean return value reports whether
 // the stateMachine can continue participating in the protocol.
 func (s *stateMachine) receive(p packet) ([]packet, []Update, bool) {
-	if s.ml.removed[p.remoteID] {
+	if s.removed[p.remoteID] {
 		return nil, nil, true
 	}
 	if s.addrs[p.remoteID] == (netip.AddrPort{}) {
@@ -182,13 +200,50 @@ func (s *stateMachine) processMsg(m *message) (*Update, bool) {
 		}
 		return nil, true
 	}
-	if !s.ml.isNews(m) {
+	if !s.isNews(m) {
 		return nil, true
 	}
 	s.mq.update(m)
-	return s.ml.update(m), true
+	return s.update(m), true
 }
 
+// update updates a node's membership status based on a received message and
+// returns an Update if the membership list changed.
+func (s *stateMachine) update(m *message) *Update {
+	id := m.ID
+	if m.Type == failed {
+		return s.remove(id)
+	}
+	var u *Update
+	if !s.isMember(id) {
+		s.members[id] = new(profile)
+		s.order.Add(id)
+		u = &Update{ID: string(id), IsMember: true}
+	}
+	s.members[id].incarnation = m.Incarnation
+	switch m.Type {
+	case alive:
+		delete(s.suspects, id)
+	case suspected:
+		s.suspects[id] = 0
+	}
+	return u
+}
+
+// remove removes an id from the list and returns an Update if it was a member.
+func (s *stateMachine) remove(id id) *Update {
+	if !s.isMember(id) {
+		return nil
+	}
+	delete(s.members, id)
+	delete(s.suspects, id)
+	s.removed[id] = true
+	s.order.Remove(id)
+	return &Update{ID: string(id), IsMember: false}
+}
+
+// processPacketType processes an incoming packet and returns any necessary
+// outgoing packets.
 func (s *stateMachine) processPacketType(p packet) []packet {
 	switch p.Type {
 	case ping:
@@ -212,6 +267,42 @@ func (s *stateMachine) processPacketType(p packet) []packet {
 	return nil
 }
 
+// suspicionTimeout returns the number of periods to wait before declaring a
+// suspect failed.
+func (s *stateMachine) suspicionTimeout() int {
+	return int(3*math.Log(float64(len(s.members)))) + 1
+}
+
+// isMember reports whether an id is a member.
+func (s *stateMachine) isMember(id id) bool {
+	_, ok := s.members[id]
+	return ok
+}
+
+// isSuspect reports whether an id is suspected.
+func (s *stateMachine) isSuspect(id id) bool {
+	_, ok := s.suspects[id]
+	return ok
+}
+
+// isNews reports whether m contains new membership status information.
+func (s *stateMachine) isNews(m *message) bool {
+	if m == nil {
+		return false
+	}
+	if !s.isMember(m.ID) {
+		return !s.removed[m.ID]
+	}
+	if m.Type == failed {
+		return true
+	}
+	incarnation := s.members[m.ID].incarnation
+	if m.Incarnation == incarnation {
+		return m.Type == suspected && !s.isSuspect(m.ID)
+	}
+	return m.Incarnation > incarnation
+}
+
 func (s *stateMachine) makePing(dst id) packet {
 	return s.makePacket(ping, dst, dst)
 }
@@ -233,8 +324,8 @@ func (s *stateMachine) makeReqAck(dst, target id) packet {
 // message.
 func (s *stateMachine) makePacket(typ packetType, dst, target id) packet {
 	var msgs []*message
-	if !s.ml.members[dst].contacted {
-		s.ml.members[dst].contacted = true
+	if !s.members[dst].contacted {
+		s.members[dst].contacted = true
 		msgs = append(s.mq.get(s.maxMsgs-1), s.aliveMessage())
 	} else {
 		msgs = s.mq.get(s.maxMsgs)
@@ -272,7 +363,7 @@ func (s *stateMachine) suspectedMessage(id id) *message {
 	return &message{
 		Type:        suspected,
 		ID:          id,
-		Incarnation: s.ml.members[id].incarnation,
+		Incarnation: s.members[id].incarnation,
 		Addr:        s.addrs[id],
 	}
 }
