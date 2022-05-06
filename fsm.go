@@ -129,6 +129,9 @@ func (s *stateMachine) timeout() []packet {
 // packets and Updates in response. The boolean return value reports whether
 // the stateMachine can continue participating in the protocol.
 func (s *stateMachine) receive(p packet) ([]packet, []Update, bool) {
+	if s.ml.removed[p.remoteID] {
+		return nil, nil, true
+	}
 	if s.addrs[p.remoteID] == (netip.AddrPort{}) {
 		// First contact from sender
 		s.addrs[p.remoteID] = p.remoteAddr
