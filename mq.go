@@ -49,15 +49,12 @@ func (mq *messageQueue) get(n int) []*message {
 	return msgs
 }
 
-// update updates an id's queued message as appropriate if one exists, or else
-// adds a new message.
+// update updates an id's queued message if one exists, or else adds a new
+// message.
 func (mq *messageQueue) update(m *message) {
 	for pos := range mq.list {
 		if mq.list[pos].m.ID != m.ID {
 			continue
-		}
-		if !supersedes(m, mq.list[pos].m) {
-			return
 		}
 		mq.list[pos] = msgItem{m, 0}
 		heap.Fix(&mq.list, pos)

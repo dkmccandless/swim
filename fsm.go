@@ -182,7 +182,7 @@ func (s *stateMachine) processMsg(m *message) (*Update, bool) {
 		}
 		return nil, true
 	}
-	if !supersedes(m, s.ml.members[m.ID]) {
+	if !s.ml.isNews(m) {
 		return nil, true
 	}
 	s.mq.update(m)
@@ -233,8 +233,8 @@ func (s *stateMachine) makeReqAck(dst, target id) packet {
 // message.
 func (s *stateMachine) makePacket(typ packetType, dst, target id) packet {
 	var msgs []*message
-	if s.ml.uncontacted[dst] {
-		delete(s.ml.uncontacted, dst)
+	if !s.ml.members[dst].contacted {
+		s.ml.members[dst].contacted = true
 		msgs = append(s.mq.get(s.maxMsgs-1), s.aliveMessage())
 	} else {
 		msgs = s.mq.get(s.maxMsgs)
@@ -272,7 +272,7 @@ func (s *stateMachine) suspectedMessage(id id) *message {
 	return &message{
 		Type:        suspected,
 		ID:          id,
-		Incarnation: s.ml.members[id].Incarnation,
+		Incarnation: s.ml.members[id].incarnation,
 		Addr:        s.addrs[id],
 	}
 }
@@ -284,27 +284,4 @@ func (s *stateMachine) failedMessage(id id) *message {
 		ID:   id,
 		Addr: s.addrs[id],
 	}
-}
-
-// supersedes reports whether a supersedes b.
-func supersedes(a, b *message) bool {
-	if a == nil {
-		return false
-	}
-	if b == nil {
-		return true
-	}
-	if a.ID != b.ID {
-		return false
-	}
-	if b.Type == failed {
-		return false
-	}
-	if a.Type == failed {
-		return true
-	}
-	if a.Incarnation == b.Incarnation {
-		return a.Type == suspected && b.Type == alive
-	}
-	return a.Incarnation > b.Incarnation
 }
