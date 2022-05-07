@@ -5,7 +5,7 @@ import (
 )
 
 func TestIsNews(t *testing.T) {
-	ml := &memberList{
+	s := &stateMachine{
 		members: map[id]*profile{
 			"abc": {incarnation: 0},
 			"def": {incarnation: 0},
@@ -50,7 +50,7 @@ func TestIsNews(t *testing.T) {
 		{&message{Type: failed, ID: "mno"}, true},
 		{&message{Type: failed, ID: "xyz"}, false},
 	} {
-		if got := ml.isNews(tt.m); got != tt.want {
+		if got := s.isNews(tt.m); got != tt.want {
 			t.Errorf("isNews(%+v): got %v, expected %v", tt.m, got, tt.want)
 		}
 	}
