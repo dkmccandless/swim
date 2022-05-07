@@ -13,8 +13,6 @@ type stateMachine struct {
 	id          id
 	incarnation int
 
-	addrs map[id]netip.AddrPort
-
 	members  map[id]*profile
 	suspects map[id]int  // number of periods under suspicion
 	removed  map[id]bool // removed ids // TODO: expire old entries by timestamp
@@ -46,8 +44,12 @@ type packet struct {
 	Type       packetType
 	remoteID   id
 	remoteAddr netip.AddrPort
-	Target     id // for ping requests
-	Msgs       []*message
+
+	// for ping requests
+	TargetID   id
+	TargetAddr netip.AddrPort
+
+	Msgs []*message
 }
 
 // A status describes a node's membership status.
@@ -71,13 +73,12 @@ type message struct {
 type profile struct {
 	incarnation int
 	contacted   bool
+	addr        netip.AddrPort
 }
 
 func newStateMachine() *stateMachine {
 	s := &stateMachine{
 		id: randID(),
-
-		addrs: make(map[id]netip.AddrPort),
 
 		members:  make(map[id]*profile),
 		suspects: make(map[id]int),
@@ -105,9 +106,7 @@ func (s *stateMachine) tick() ([]packet, []Update) {
 			s.mq.update(m)
 			ps = append(ps, s.makeMessagePing(m))
 			u := s.remove(id)
-			u.Addr = s.addrs[id]
 			failed = append(failed, *u)
-			delete(s.addrs, id)
 		}
 	}
 
@@ -138,7 +137,7 @@ func (s *stateMachine) timeout() []packet {
 	}
 	var ps []packet
 	for _, id := range s.order.IndependentSample(s.nPingReqs, s.pingTarget) {
-		ps = append(ps, s.makePingReq(id, s.pingTarget))
+		ps = append(ps, s.makePingReq(id, s.pingTarget, s.members[s.pingTarget].addr))
 	}
 	return ps
 }
@@ -150,34 +149,16 @@ func (s *stateMachine) receive(p packet) ([]packet, []Update, bool) {
 	if s.removed[p.remoteID] {
 		return nil, nil, true
 	}
-	if s.addrs[p.remoteID] == (netip.AddrPort{}) {
-		// First contact from sender
-		s.addrs[p.remoteID] = p.remoteAddr
-	}
-	// Update address records and populate empty message addresses
-	for i, m := range p.Msgs {
-		switch {
-		case m.ID == s.id:
-			continue
-		case m.Addr == netip.AddrPort{}:
-			p.Msgs[i].Addr = p.remoteAddr
-		default:
-			s.addrs[m.ID] = m.Addr
-		}
-	}
-
 	var us []Update
 	for _, m := range p.Msgs {
+		if m.Addr == (netip.AddrPort{}) {
+			m.Addr = p.remoteAddr
+		}
 		u, ok := s.processMsg(m)
 		if !ok {
 			return nil, nil, false
 		}
 		if u != nil {
-			id := id(u.ID)
-			u.Addr = s.addrs[id]
-			if !u.IsMember {
-				delete(s.addrs, id)
-			}
 			us = append(us, *u)
 		}
 	}
@@ -218,9 +199,10 @@ func (s *stateMachine) update(m *message) *Update {
 	if !s.isMember(id) {
 		s.members[id] = new(profile)
 		s.order.Add(id)
-		u = &Update{ID: string(id), IsMember: true}
+		u = &Update{ID: string(id), IsMember: true, Addr: m.Addr}
 	}
 	s.members[id].incarnation = m.Incarnation
+	s.members[id].addr = m.Addr
 	switch m.Type {
 	case alive:
 		delete(s.suspects, id)
@@ -235,11 +217,12 @@ func (s *stateMachine) remove(id id) *Update {
 	if !s.isMember(id) {
 		return nil
 	}
+	u := &Update{ID: string(id), IsMember: false, Addr: s.members[id].addr}
 	delete(s.members, id)
 	delete(s.suspects, id)
 	s.removed[id] = true
 	s.order.Remove(id)
-	return &Update{ID: string(id), IsMember: false}
+	return u
 }
 
 // processPacketType processes an incoming packet and returns any necessary
@@ -249,16 +232,16 @@ func (s *stateMachine) processPacketType(p packet) []packet {
 	case ping:
 		return []packet{s.makeAck(p.remoteID)}
 	case pingReq:
-		s.pingReqs[p.remoteID] = p.Target
-		return []packet{s.makePing(p.Target)}
+		s.pingReqs[p.remoteID] = p.TargetID
+		return []packet{s.makePing(p.TargetID)}
 	case ack:
-		if p.remoteID == s.pingTarget || p.Target == s.pingTarget {
+		if p.remoteID == s.pingTarget || p.TargetID == s.pingTarget {
 			s.gotAck = true
 		}
 		var ps []packet
 		for src, target := range s.pingReqs {
-			if p.remoteID == target {
-				ps = append(ps, s.makeReqAck(src, target))
+			if target == p.remoteID {
+				ps = append(ps, s.makeReqAck(src, p.remoteID, p.remoteAddr))
 				delete(s.pingReqs, src)
 			}
 		}
@@ -304,25 +287,25 @@ func (s *stateMachine) isNews(m *message) bool {
 }
 
 func (s *stateMachine) makePing(dst id) packet {
-	return s.makePacket(ping, dst, dst)
+	return s.makePacket(ping, dst, "", netip.AddrPort{})
 }
 
 func (s *stateMachine) makeAck(dst id) packet {
-	return s.makePacket(ack, dst, dst)
+	return s.makePacket(ack, dst, "", netip.AddrPort{})
 }
 
-func (s *stateMachine) makePingReq(dst, target id) packet {
-	return s.makePacket(pingReq, dst, target)
+func (s *stateMachine) makePingReq(dst, target id, targetAddr netip.AddrPort) packet {
+	return s.makePacket(pingReq, dst, target, targetAddr)
 }
 
-func (s *stateMachine) makeReqAck(dst, target id) packet {
-	return s.makePacket(ack, dst, target)
+func (s *stateMachine) makeReqAck(dst, target id, targetAddr netip.AddrPort) packet {
+	return s.makePacket(ack, dst, target, targetAddr)
 }
 
 // makePacket assembles a packet and populates it with messages. If dst has
 // not been sent to before, one of the messages is an introductory alive
 // message.
-func (s *stateMachine) makePacket(typ packetType, dst, target id) packet {
+func (s *stateMachine) makePacket(typ packetType, dst, target id, targetAddr netip.AddrPort) packet {
 	var msgs []*message
 	if !s.members[dst].contacted {
 		s.members[dst].contacted = true
@@ -333,8 +316,9 @@ func (s *stateMachine) makePacket(typ packetType, dst, target id) packet {
 	return packet{
 		Type:       typ,
 		remoteID:   dst,
-		remoteAddr: s.addrs[dst],
-		Target:     target,
+		remoteAddr: s.members[dst].addr,
+		TargetID:   target,
+		TargetAddr: targetAddr,
 		Msgs:       msgs,
 	}
 }
@@ -344,7 +328,7 @@ func (s *stateMachine) makeMessagePing(m *message) packet {
 	return packet{
 		Type:       ping,
 		remoteID:   m.ID,
-		remoteAddr: s.addrs[m.ID],
+		remoteAddr: m.Addr,
 		Msgs:       []*message{m},
 	}
 }
@@ -364,7 +348,7 @@ func (s *stateMachine) suspectedMessage(id id) *message {
 		Type:        suspected,
 		ID:          id,
 		Incarnation: s.members[id].incarnation,
-		Addr:        s.addrs[id],
+		Addr:        s.members[id].addr,
 	}
 }
 
@@ -373,6 +357,6 @@ func (s *stateMachine) failedMessage(id id) *message {
 	return &message{
 		Type: failed,
 		ID:   id,
-		Addr: s.addrs[id],
+		Addr: s.members[id].addr,
 	}
 }
