@@ -23,6 +23,13 @@ type Update struct {
 	Addr     netip.AddrPort
 }
 
+// A Message carries user-defined data.
+type Message struct {
+	SrcID   string
+	SrcAddr netip.AddrPort
+	Body    []byte
+}
+
 // A Node is a network node participating in the SWIM protocol.
 type Node struct {
 	mu  sync.Mutex // protects the following fields
@@ -31,6 +38,7 @@ type Node struct {
 	id       id // copy of fsm.id
 	conn     *net.UDPConn
 	updates  bufchan.Chan[Update]
+	messages bufchan.Chan[Message]
 	stopTick chan struct{}
 }
 
@@ -46,6 +54,7 @@ func Start() (*Node, error) {
 		id:       fsm.id,
 		conn:     conn,
 		updates:  bufchan.Make[Update](),
+		messages: bufchan.Make[Message](),
 		stopTick: make(chan struct{}),
 	}
 	go n.runReceive()
@@ -130,18 +139,21 @@ func (n *Node) runReceive() {
 		if err := json.Unmarshal(b[:len], &e); err != nil {
 			continue
 		}
-		e.P.remoteID = e.FromID
+		e.P.remoteID = e.SrcID
 		e.P.remoteAddr = addr
-		ps, us, ok := n.receive(e.P)
+		ps, us, ms, ok := n.receive(e.P)
 		if !ok {
 			return
 		}
 		n.sendUpdates(us)
+		for _, m := range ms {
+			n.messages.Send() <- m
+		}
 		n.send(ps)
 	}
 }
 
-func (n *Node) receive(p packet) ([]packet, []Update, bool) {
+func (n *Node) receive(p packet) ([]packet, []Update, []Message, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.fsm.receive(p)
@@ -153,10 +165,23 @@ func (n *Node) sendUpdates(us []Update) {
 	}
 }
 
+// Message disseminates b throughout the network.
+func (n *Node) Message(b []byte) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.fsm.addUserMsg(b)
+}
+
 // Updates returns a channel from which Updates can be received. The channel is
 // closed when n ceases participation in the protocol.
 func (n *Node) Updates() <-chan Update {
 	return n.updates.Receive()
+}
+
+// Messages returns a channel from which Messages can be received. The channel
+// is closed when n ceases participation in the protocol.
+func (n *Node) Messages() <-chan Message {
+	return n.messages.Receive()
 }
 
 // ID returns n's ID on the network.
@@ -170,8 +195,8 @@ func (n *Node) LocalAddr() netip.AddrPort {
 }
 
 type envelope struct {
-	FromID id
-	P      packet
+	SrcID id
+	P     packet
 }
 
 func stoppedTimer() *time.Timer {

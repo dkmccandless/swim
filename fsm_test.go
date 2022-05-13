@@ -12,8 +12,9 @@ func TestIsNews(t *testing.T) {
 			"ghi": {incarnation: 1},
 			"jkl": {incarnation: 1},
 		},
-		suspects: map[id]int{"def": 0, "jkl": 0},
-		removed:  map[id]bool{"xyz": true},
+		suspects:     map[id]int{"def": 0, "jkl": 0},
+		removed:      map[id]bool{"xyz": true},
+		seenUserMsgs: map[id]bool{"1a2b3c": true},
 	}
 	for _, tt := range []struct {
 		m    *message
@@ -49,6 +50,30 @@ func TestIsNews(t *testing.T) {
 		{&message{Type: failed, ID: "jkl"}, true},
 		{&message{Type: failed, ID: "mno"}, true},
 		{&message{Type: failed, ID: "xyz"}, false},
+		{
+			&message{
+				Type: userMsg, ID: "abc", MessageID: "1a2b3c", Body: []byte{
+					72, 101, 108, 108, 111, 44, 32, 119, 111, 114, 108, 100, 33,
+				},
+			},
+			false,
+		},
+		{
+			&message{
+				Type: userMsg, ID: "abc", MessageID: "4d5e6f", Body: []byte{
+					72, 101, 108, 108, 111, 44, 32, 119, 111, 114, 108, 100, 33,
+				},
+			},
+			true,
+		},
+		{
+			&message{
+				Type: userMsg, ID: "xyz", MessageID: "4d5e6f", Body: []byte{
+					72, 101, 108, 108, 111, 44, 32, 119, 111, 114, 108, 100, 33,
+				},
+			},
+			false,
+		},
 	} {
 		if got := s.isNews(tt.m); got != tt.want {
 			t.Errorf("isNews(%+v): got %v, expected %v", tt.m, got, tt.want)
