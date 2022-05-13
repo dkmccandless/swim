@@ -169,7 +169,6 @@ func (n *Node) emitPending() {
 		n.messages.Send() <- m
 	}
 	n.fsm.pendingMessages = nil
-
 }
 
 // Message disseminates b throughout the network.
