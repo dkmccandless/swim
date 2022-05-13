@@ -19,8 +19,8 @@ const (
 // An Update describes a change to the network membership.
 type Update struct {
 	ID       string
-	IsMember bool
 	Addr     netip.AddrPort
+	IsMember bool
 }
 
 // A Message carries user-defined data.
@@ -74,7 +74,9 @@ func (n *Node) runTick() {
 			tickPeriod := time.Duration(float64(tickAverage) * (0.9 + 0.2*rand.Float64()))
 			periodTimer.Reset(tickPeriod)
 			pingTimer.Reset(pingTimeout)
-			n.send(n.tick())
+			ps := n.tick()
+			n.emitPending()
+			n.send(ps)
 		case <-pingTimer.C:
 			n.send(n.timeout())
 		case <-n.stopTick:
@@ -85,10 +87,8 @@ func (n *Node) runTick() {
 
 func (n *Node) tick() []packet {
 	n.mu.Lock()
-	ps, us := n.fsm.tick()
-	n.mu.Unlock()
-	n.sendUpdates(us)
-	return ps
+	defer n.mu.Unlock()
+	return n.fsm.tick()
 }
 
 func (n *Node) timeout() []packet {
@@ -141,28 +141,35 @@ func (n *Node) runReceive() {
 		}
 		e.P.remoteID = e.SrcID
 		e.P.remoteAddr = addr
-		ps, us, ms, ok := n.receive(e.P)
+		ps, ok := n.receive(e.P)
 		if !ok {
 			return
 		}
-		n.sendUpdates(us)
-		for _, m := range ms {
-			n.messages.Send() <- m
-		}
+		n.emitPending()
 		n.send(ps)
 	}
 }
 
-func (n *Node) receive(p packet) ([]packet, []Update, []Message, bool) {
+func (n *Node) receive(p packet) ([]packet, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.fsm.receive(p)
 }
 
-func (n *Node) sendUpdates(us []Update) {
-	for _, u := range us {
+// emitPending sends all pending Updates and Messages on their respective
+// channels.
+func (n *Node) emitPending() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, u := range n.fsm.pendingUpdates {
 		n.updates.Send() <- u
 	}
+	n.fsm.pendingUpdates = nil
+	for _, m := range n.fsm.pendingMessages {
+		n.messages.Send() <- m
+	}
+	n.fsm.pendingMessages = nil
+
 }
 
 // Message disseminates b throughout the network.

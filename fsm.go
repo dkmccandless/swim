@@ -26,11 +26,13 @@ type stateMachine struct {
 
 	pingTarget id
 	gotAck     bool
-
-	pingReqs map[id]id
+	pingReqs   map[id]id
 
 	nPingReqs int
 	maxMsgs   int
+
+	pendingUpdates  []Update
+	pendingMessages []Message
 }
 
 // A packetType describes the meaning of a packet.
@@ -113,23 +115,19 @@ func newStateMachine() *stateMachine {
 }
 
 // tick begins a new protocol period and returns a ping, as well as packets to
-// notify any members declared suspected or failed and corresponding
+// notify any members declared suspected or failed. tick may produce pending
 // Updates.
-func (s *stateMachine) tick() ([]packet, []Update) {
+func (s *stateMachine) tick() []packet {
 	var ps []packet
-
-	var failed []Update
 	for id := range s.suspects {
 		if s.suspects[id]++; s.suspects[id] >= s.suspicionTimeout() {
 			// Suspicion timeout
 			m := s.failedMessage(id)
 			s.msgQueue.Push(id, m)
 			ps = append(ps, s.makeMessagePing(m))
-			u := s.remove(id)
-			failed = append(failed, *u)
+			s.remove(id)
 		}
 	}
-
 	if id := s.pingTarget; !s.gotAck && s.isMember(id) {
 		// Expired ping target
 		if !s.isSuspect(id) {
@@ -139,14 +137,13 @@ func (s *stateMachine) tick() ([]packet, []Update) {
 		s.msgQueue.Push(id, m)
 		ps = append(ps, s.makeMessagePing(m))
 	}
-
-	s.pingTarget = s.order.Next()
 	s.gotAck = false
 	s.pingReqs = map[id]id{}
+	s.pingTarget = s.order.Next()
 	if s.pingTarget == "" {
-		return ps, failed
+		return ps
 	}
-	return append(ps, s.makePing(s.pingTarget)), failed
+	return append(ps, s.makePing(s.pingTarget))
 }
 
 // timeout produces ping requests if an ack has not been received from the
@@ -162,77 +159,63 @@ func (s *stateMachine) timeout() []packet {
 	return ps
 }
 
-// receive processes an incoming packet and produces any necessary outgoing
-// packets, Updates, and Messages in response. The boolean return value reports
-// whether the stateMachine can continue participating in the protocol.
-func (s *stateMachine) receive(p packet) ([]packet, []Update, []Message, bool) {
+// receive processes an incoming packet and returns any necessary outgoing
+// packets, and a boolean value reporting whether the stateMachine can continue
+// participating in the protocol. receive may produce pending Updates or
+// Messages.
+func (s *stateMachine) receive(p packet) ([]packet, bool) {
 	if s.removed[p.remoteID] {
-		return nil, nil, nil, true
+		return nil, true
 	}
-	var us []Update
-	var ms []Message
 	for _, msg := range p.Msgs {
 		if msg.Addr == (netip.AddrPort{}) {
 			msg.Addr = p.remoteAddr
 		}
-		u, m, ok := s.processMsg(msg)
-		if !ok {
-			return nil, nil, nil, false
-		}
-		if u != nil {
-			us = append(us, *u)
-		}
-		if m != nil {
-			ms = append(ms, *m)
+		if !s.processMsg(msg) {
+			return nil, false
 		}
 	}
-	return s.processPacketType(p), us, ms, true
+	return s.processPacketType(p), true
 }
 
-// processMsg returns an Update if m results in a change of membership, or else
-// nil. The boolean return value is false if the stateMachine has been declared
-// failed, and true otherwise.
-func (s *stateMachine) processMsg(m *message) (*Update, *Message, bool) {
-	if m.ID == s.id {
-		switch m.Type {
-		case suspected:
-			if m.Incarnation == s.incarnation {
-				s.incarnation++
-				s.msgQueue.Push(s.id, s.aliveMessage())
-			}
-		case failed:
-			return nil, nil, false
+// processMsg processes an incoming message and reports whether s can continue
+// to participate in the protocol.
+func (s *stateMachine) processMsg(m *message) bool {
+	switch {
+	case m.ID == s.id:
+		if m.Type == suspected && m.Incarnation == s.incarnation {
+			s.incarnation++
+			s.msgQueue.Push(s.id, s.aliveMessage())
 		}
-		return nil, nil, true
-	}
-	if !s.isNews(m) {
-		return nil, nil, true
-	}
-	if m.Type == userMsg {
+		return m.Type != failed
+	case m.Type == userMsg:
 		s.seenUserMsgs[m.MessageID] = true
 		s.userMsgQueue.Push(m.MessageID, m)
-		return nil, &Message{
+		s.pendingMessages = append(s.pendingMessages, Message{
 			SrcID:   string(m.ID),
 			SrcAddr: m.Addr,
 			Body:    m.Body,
-		}, true
+		})
+	case s.isMemberNews(m):
+		s.update(m)
+		s.msgQueue.Push(m.ID, m)
 	}
-	s.msgQueue.Push(m.ID, m)
-	return s.update(m), nil, true
+	return true
 }
 
-// update updates a node's membership status based on a received message and
-// returns an Update if the membership list changed.
-func (s *stateMachine) update(m *message) *Update {
+// update updates a node's membership status based on a received message.
+func (s *stateMachine) update(m *message) {
 	id := m.ID
 	if m.Type == failed {
-		return s.remove(id)
+		s.remove(id)
+		return
 	}
-	var u *Update
 	if !s.isMember(id) {
 		s.members[id] = new(profile)
 		s.order.Add(id)
-		u = &Update{ID: string(id), IsMember: true, Addr: m.Addr}
+		s.pendingUpdates = append(s.pendingUpdates, Update{
+			ID: string(id), Addr: m.Addr, IsMember: true,
+		})
 	}
 	s.members[id].incarnation = m.Incarnation
 	s.members[id].addr = m.Addr
@@ -242,20 +225,20 @@ func (s *stateMachine) update(m *message) *Update {
 	case suspected:
 		s.suspects[id] = 0
 	}
-	return u
 }
 
-// remove removes an id from the list and returns an Update if it was a member.
-func (s *stateMachine) remove(id id) *Update {
+// remove removes an id from the membership list.
+func (s *stateMachine) remove(id id) {
 	if !s.isMember(id) {
-		return nil
+		return
 	}
-	u := &Update{ID: string(id), IsMember: false, Addr: s.members[id].addr}
+	s.pendingUpdates = append(s.pendingUpdates, Update{
+		ID: string(id), Addr: s.members[id].addr, IsMember: false,
+	})
 	delete(s.members, id)
 	delete(s.suspects, id)
 	s.removed[id] = true
 	s.order.Remove(id)
-	return u
 }
 
 // processPacketType processes an incoming packet and returns any necessary
@@ -301,14 +284,15 @@ func (s *stateMachine) isSuspect(id id) bool {
 	return ok
 }
 
-// isNews reports whether m contains new membership status information or an
-// unseen user message.
-func (s *stateMachine) isNews(m *message) bool {
+// isMemberNews reports whether m contains new membership status information.
+func (s *stateMachine) isMemberNews(m *message) bool {
 	if m == nil {
 		return false
 	}
-	if m.Type == userMsg {
-		return !s.seenUserMsgs[m.MessageID] && !s.removed[m.ID]
+	switch m.Type {
+	case alive, suspected, failed:
+	default:
+		return false
 	}
 	if !s.isMember(m.ID) {
 		return !s.removed[m.ID]
