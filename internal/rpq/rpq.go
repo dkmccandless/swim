@@ -74,14 +74,6 @@ func (q *Queue[K, V]) PopN(n int) []V {
 	return values
 }
 
-// Remove removes key and its associated value from the Queue. If key is the
-// zero value of type K or is not present, Remove is a no-op.
-func (q *Queue[K, V]) Remove(key K) {
-	if i, ok := q.pq.index[key]; ok {
-		heap.Remove(&q.pq, i)
-	}
-}
-
 // Len returns the number of items in the Queue.
 func (q *Queue[K, V]) Len() int { return q.pq.Len() }
 
