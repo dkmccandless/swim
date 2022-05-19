@@ -136,9 +136,9 @@ func TestPush(t *testing.T) {
 		},
 	} {
 		s := fmt.Sprintf("%+v", tt.q)
-		tt.q.Push(tt.key, tt.value)
+		tt.q.Upsert(tt.key, tt.value)
 		if !reflect.DeepEqual(tt.q.pq.toMap(), tt.want.pq.toMap()) {
-			t.Errorf("%v.Push(%q, %v): got %+v, expected %+v",
+			t.Errorf("%v.Upsert(%q, %v): got %+v, expected %+v",
 				s, tt.key, tt.value, tt.q, tt.want,
 			)
 		}

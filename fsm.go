@@ -108,7 +108,7 @@ func (s *stateMachine) tick() ([]packet, []Update) {
 		if s.suspects[id]++; s.suspects[id] >= s.suspicionTimeout() {
 			// Suspicion timeout
 			m := s.failedMessage(id)
-			s.msgQueue.Push(id, m)
+			s.msgQueue.Upsert(id, m)
 			ps = append(ps, s.makeMessagePing(m))
 			u := s.remove(id)
 			failed = append(failed, *u)
@@ -121,7 +121,7 @@ func (s *stateMachine) tick() ([]packet, []Update) {
 			s.suspects[id] = 0
 		}
 		m := s.suspectedMessage(id)
-		s.msgQueue.Push(id, m)
+		s.msgQueue.Upsert(id, m)
 		ps = append(ps, s.makeMessagePing(m))
 	}
 
@@ -179,7 +179,7 @@ func (s *stateMachine) processMsg(m *message) (*Update, bool) {
 		case suspected:
 			if m.Incarnation == s.incarnation {
 				s.incarnation++
-				s.msgQueue.Push(s.id, s.aliveMessage())
+				s.msgQueue.Upsert(s.id, s.aliveMessage())
 			}
 		case failed:
 			return nil, false
@@ -189,7 +189,7 @@ func (s *stateMachine) processMsg(m *message) (*Update, bool) {
 	if !s.isNews(m) {
 		return nil, true
 	}
-	s.msgQueue.Push(m.ID, m)
+	s.msgQueue.Upsert(m.ID, m)
 	return s.update(m), true
 }
 

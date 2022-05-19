@@ -29,9 +29,9 @@ func New[K comparable, V any](quota func() int) *Queue[K, V] {
 	}
 }
 
-// Push inserts a value into the Queue. If key is not the zero value of type K,
-// this insertion replaces any other value associated with key.
-func (q *Queue[K, V]) Push(key K, value V) {
+// Upsert inserts a key-value pair into the Queue, or updates value if key is
+// already present.
+func (q *Queue[K, V]) Upsert(key K, value V) {
 	if i, ok := q.pq.index[key]; ok {
 		q.pq.items[i].value = value
 		q.pq.items[i].count = 0
