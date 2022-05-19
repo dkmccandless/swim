@@ -112,22 +112,14 @@ func (pq priorityQueue[K, V]) Less(i, j int) bool {
 
 func (pq priorityQueue[K, V]) Swap(i, j int) {
 	a, b := pq.items[j], pq.items[i]
-	if _, ok := pq.index[a.key]; ok {
-		pq.index[a.key] = i
-	}
-	if _, ok := pq.index[b.key]; ok {
-		pq.index[b.key] = j
-	}
+	pq.index[a.key] = i
+	pq.index[b.key] = j
 	pq.items[i], pq.items[j] = a, b
 }
 
 func (pq *priorityQueue[K, V]) Push(a any) {
-	n := len(pq.items)
 	item := a.(*item[K, V])
-	var zero K
-	if item.key != zero {
-		pq.index[item.key] = n
-	}
+	pq.index[item.key] = len(pq.items)
 	pq.items = append(pq.items, item)
 }
 
