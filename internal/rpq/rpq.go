@@ -5,9 +5,7 @@ package rpq
 
 import "container/heap"
 
-// A Queue is a recurrent priority queue of values of type V, optionally
-// indexed by keys of type K. Keys that are not the zero value of type K are
-// unique within a Queue.
+// A Queue is a recurrent priority queue of key-value pairs.
 type Queue[K comparable, V any] struct {
 	pq    priorityQueue[K, V]
 	quota func() int
