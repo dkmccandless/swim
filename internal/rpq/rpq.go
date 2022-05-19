@@ -45,14 +45,11 @@ func (q *Queue[K, V]) Push(key K, value V) {
 // the number of times it has been returned is greater than or equal to the
 // value returned by quota. Pop panics if the Queue is empty.
 func (q *Queue[K, V]) Pop() V {
-	value := q.pq.items[0].value
-	q.pq.items[0].count++
-	if q.pq.items[0].count >= q.quota() {
-		heap.Pop(&q.pq)
-	} else {
-		heap.Fix(&q.pq, 0)
+	it := heap.Pop(&q.pq).(*item[K, V])
+	if it.count++; it.count < q.quota() {
+		heap.Push(&q.pq, it)
 	}
-	return value
+	return it.value
 }
 
 // PopN returns up to n distinct items of the highest priorities. If there are
@@ -61,24 +58,18 @@ func (q *Queue[K, V]) Pop() V {
 // they have been returned is greater than or equal to the value returned by
 // quota.
 func (q *Queue[K, V]) PopN(n int) []V {
-	if n > q.Len() {
-		n = q.Len()
-	}
-	values := make([]V, n)
-	for i, item := range q.pq.items[:n] {
-		values[i] = item.value
-		q.pq.items[i].count++
-	}
 	quota := q.quota()
-
-	// Since incrementing an item's count will not cause its index to decrease,
-	// process items in reverse order to ensure that each is visited once.
-	for i := n - 1; i >= 0; i-- {
-		if q.pq.items[i].count >= quota {
-			heap.Remove(&q.pq, i)
-		} else {
-			heap.Fix(&q.pq, i)
+	var values []V
+	var reinsert []*item[K, V]
+	for q.pq.Len() > 0 && len(values) < n {
+		it := heap.Pop(&q.pq).(*item[K, V])
+		values = append(values, it.value)
+		if it.count++; it.count < quota {
+			reinsert = append(reinsert, it)
 		}
+	}
+	for _, it := range reinsert {
+		heap.Push(&q.pq, it)
 	}
 	return values
 }

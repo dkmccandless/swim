@@ -3,6 +3,7 @@ package rpq
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -334,6 +335,7 @@ func TestPopN(t *testing.T) {
 	} {
 		s := fmt.Sprintf("%+v", tt.q)
 		values := tt.q.PopN(tt.n)
+		sort.Ints(values)
 		if !reflect.DeepEqual(values, tt.values) ||
 			!reflect.DeepEqual(tt.q.pq.toMap(), tt.want.pq.toMap()) {
 			t.Errorf("%v.PopN(): got %+v, %+v; expected %+v, %+v",
