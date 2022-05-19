@@ -5,6 +5,7 @@ import (
 	"net/netip"
 
 	"github.com/dkmccandless/swim/internal/roundrobinrandom"
+	"github.com/dkmccandless/swim/internal/rpq"
 )
 
 // A stateMachine is a finite state machine that implements the SWIM
@@ -19,7 +20,7 @@ type stateMachine struct {
 
 	order roundrobinrandom.Order[id]
 
-	mq *messageQueue
+	msgQueue *rpq.Queue[id, *message]
 
 	pingTarget id
 	gotAck     bool
@@ -88,7 +89,11 @@ func newStateMachine() *stateMachine {
 		nPingReqs: 2, // TODO: scale according to permissible false positive probability
 		maxMsgs:   6, // TODO: revisit guaranteed MTU constraint
 	}
-	s.mq = newMessageQueue(func() int { return len(s.members) + 1 })
+	s.msgQueue = rpq.New[id, *message](func() int {
+		// A small multiple of the logarithm of the size of the network
+		// suffices to ensure reliable dissemination.
+		return int(3*math.Log(float64(len(s.members)+1))) + 1
+	})
 	return s
 }
 
@@ -103,20 +108,20 @@ func (s *stateMachine) tick() ([]packet, []Update) {
 		if s.suspects[id]++; s.suspects[id] >= s.suspicionTimeout() {
 			// Suspicion timeout
 			m := s.failedMessage(id)
-			s.mq.update(m)
+			s.msgQueue.Upsert(id, m)
 			ps = append(ps, s.makeMessagePing(m))
 			u := s.remove(id)
 			failed = append(failed, *u)
 		}
 	}
 
-	if !s.gotAck && s.isMember(s.pingTarget) {
+	if id := s.pingTarget; !s.gotAck && s.isMember(id) {
 		// Expired ping target
-		if !s.isSuspect(s.pingTarget) {
-			s.suspects[s.pingTarget] = 0
+		if !s.isSuspect(id) {
+			s.suspects[id] = 0
 		}
-		m := s.suspectedMessage(s.pingTarget)
-		s.mq.update(m)
+		m := s.suspectedMessage(id)
+		s.msgQueue.Upsert(id, m)
 		ps = append(ps, s.makeMessagePing(m))
 	}
 
@@ -174,7 +179,7 @@ func (s *stateMachine) processMsg(m *message) (*Update, bool) {
 		case suspected:
 			if m.Incarnation == s.incarnation {
 				s.incarnation++
-				s.mq.update(s.aliveMessage())
+				s.msgQueue.Upsert(s.id, s.aliveMessage())
 			}
 		case failed:
 			return nil, false
@@ -184,7 +189,7 @@ func (s *stateMachine) processMsg(m *message) (*Update, bool) {
 	if !s.isNews(m) {
 		return nil, true
 	}
-	s.mq.update(m)
+	s.msgQueue.Upsert(m.ID, m)
 	return s.update(m), true
 }
 
@@ -309,9 +314,9 @@ func (s *stateMachine) makePacket(typ packetType, dst, target id, targetAddr net
 	var msgs []*message
 	if !s.members[dst].contacted {
 		s.members[dst].contacted = true
-		msgs = append(s.mq.get(s.maxMsgs-1), s.aliveMessage())
+		msgs = append(s.msgQueue.PopN(s.maxMsgs-1), s.aliveMessage())
 	} else {
-		msgs = s.mq.get(s.maxMsgs)
+		msgs = s.msgQueue.PopN(s.maxMsgs)
 	}
 	return packet{
 		Type:       typ,
