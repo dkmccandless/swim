@@ -123,7 +123,7 @@ func (s *stateMachine) tick() []packet {
 		if s.suspects[id]++; s.suspects[id] >= s.suspicionTimeout() {
 			// Suspicion timeout
 			m := s.failedMessage(id)
-			s.msgQueue.Push(id, m)
+			s.msgQueue.Upsert(id, m)
 			ps = append(ps, s.makeMessagePing(m))
 			s.remove(id)
 		}
@@ -134,7 +134,7 @@ func (s *stateMachine) tick() []packet {
 			s.suspects[id] = 0
 		}
 		m := s.suspectedMessage(id)
-		s.msgQueue.Push(id, m)
+		s.msgQueue.Upsert(id, m)
 		ps = append(ps, s.makeMessagePing(m))
 	}
 	s.gotAck = false
@@ -185,12 +185,12 @@ func (s *stateMachine) processMsg(m *message) bool {
 	case m.ID == s.id:
 		if m.Type == suspected && m.Incarnation == s.incarnation {
 			s.incarnation++
-			s.msgQueue.Push(s.id, s.aliveMessage())
+			s.msgQueue.Upsert(s.id, s.aliveMessage())
 		}
 		return m.Type != failed
 	case m.Type == userMsg:
 		s.seenUserMsgs[m.MessageID] = true
-		s.userMsgQueue.Push(m.MessageID, m)
+		s.userMsgQueue.Upsert(m.MessageID, m)
 		s.pendingMessages = append(s.pendingMessages, Message{
 			SrcID:   string(m.ID),
 			SrcAddr: m.Addr,
@@ -198,7 +198,7 @@ func (s *stateMachine) processMsg(m *message) bool {
 		})
 	case s.isMemberNews(m):
 		s.update(m)
-		s.msgQueue.Push(m.ID, m)
+		s.msgQueue.Upsert(m.ID, m)
 	}
 	return true
 }
@@ -387,7 +387,7 @@ func (s *stateMachine) failedMessage(id id) *message {
 // addUserMsg adds a new userMsg carrying b to the user message queue.
 func (s *stateMachine) addUserMsg(b []byte) {
 	messageID := randID()
-	s.userMsgQueue.Push(messageID, &message{
+	s.userMsgQueue.Upsert(messageID, &message{
 		Type:      userMsg,
 		ID:        s.id,
 		MessageID: messageID,

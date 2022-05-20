@@ -5,9 +5,7 @@ package rpq
 
 import "container/heap"
 
-// A Queue is a recurrent priority queue of values of type V, optionally
-// indexed by keys of type K. Keys that are not the zero value of type K are
-// unique within a Queue.
+// A Queue is a recurrent priority queue of key-value pairs.
 type Queue[K comparable, V any] struct {
 	pq    priorityQueue[K, V]
 	quota func() int
@@ -29,9 +27,9 @@ func New[K comparable, V any](quota func() int) *Queue[K, V] {
 	}
 }
 
-// Push inserts a value into the Queue. If key is not the zero value of type K,
-// this insertion replaces any other value associated with key.
-func (q *Queue[K, V]) Push(key K, value V) {
+// Upsert inserts a key-value pair into the Queue, or updates value if key is
+// already present.
+func (q *Queue[K, V]) Upsert(key K, value V) {
 	if i, ok := q.pq.index[key]; ok {
 		q.pq.items[i].value = value
 		q.pq.items[i].count = 0
@@ -45,14 +43,11 @@ func (q *Queue[K, V]) Push(key K, value V) {
 // the number of times it has been returned is greater than or equal to the
 // value returned by quota. Pop panics if the Queue is empty.
 func (q *Queue[K, V]) Pop() V {
-	value := q.pq.items[0].value
-	q.pq.items[0].count++
-	if q.pq.items[0].count >= q.quota() {
-		heap.Pop(&q.pq)
-	} else {
-		heap.Fix(&q.pq, 0)
+	it := heap.Pop(&q.pq).(*item[K, V])
+	if it.count++; it.count < q.quota() {
+		heap.Push(&q.pq, it)
 	}
-	return value
+	return it.value
 }
 
 // PopN returns up to n distinct items of the highest priorities. If there are
@@ -61,34 +56,20 @@ func (q *Queue[K, V]) Pop() V {
 // they have been returned is greater than or equal to the value returned by
 // quota.
 func (q *Queue[K, V]) PopN(n int) []V {
-	if n > q.Len() {
-		n = q.Len()
-	}
-	values := make([]V, n)
-	for i, item := range q.pq.items[:n] {
-		values[i] = item.value
-		q.pq.items[i].count++
-	}
 	quota := q.quota()
-
-	// Since incrementing an item's count will not cause its index to decrease,
-	// process items in reverse order to ensure that each is visited once.
-	for i := n - 1; i >= 0; i-- {
-		if q.pq.items[i].count >= quota {
-			heap.Remove(&q.pq, i)
-		} else {
-			heap.Fix(&q.pq, i)
+	var values []V
+	var reinsert []*item[K, V]
+	for q.pq.Len() > 0 && len(values) < n {
+		it := heap.Pop(&q.pq).(*item[K, V])
+		values = append(values, it.value)
+		if it.count++; it.count < quota {
+			reinsert = append(reinsert, it)
 		}
 	}
-	return values
-}
-
-// Remove removes key and its associated value from the Queue. If key is the
-// zero value of type K or is not present, Remove is a no-op.
-func (q *Queue[K, V]) Remove(key K) {
-	if i, ok := q.pq.index[key]; ok {
-		heap.Remove(&q.pq, i)
+	for _, it := range reinsert {
+		heap.Push(&q.pq, it)
 	}
+	return values
 }
 
 // Len returns the number of items in the Queue.
@@ -112,22 +93,14 @@ func (pq priorityQueue[K, V]) Less(i, j int) bool {
 
 func (pq priorityQueue[K, V]) Swap(i, j int) {
 	a, b := pq.items[j], pq.items[i]
-	if _, ok := pq.index[a.key]; ok {
-		pq.index[a.key] = i
-	}
-	if _, ok := pq.index[b.key]; ok {
-		pq.index[b.key] = j
-	}
+	pq.index[a.key] = i
+	pq.index[b.key] = j
 	pq.items[i], pq.items[j] = a, b
 }
 
 func (pq *priorityQueue[K, V]) Push(a any) {
-	n := len(pq.items)
 	item := a.(*item[K, V])
-	var zero K
-	if item.key != zero {
-		pq.index[item.key] = n
-	}
+	pq.index[item.key] = len(pq.items)
 	pq.items = append(pq.items, item)
 }
 
