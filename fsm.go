@@ -292,9 +292,7 @@ func (s *stateMachine) isMemberNews(m *message) bool {
 	if m == nil {
 		return false
 	}
-	switch m.Type {
-	case alive, suspected, failed:
-	default:
+	if m.Type == userMsg {
 		return false
 	}
 	if !s.isMember(m.ID) {
