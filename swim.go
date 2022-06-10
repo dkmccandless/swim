@@ -175,7 +175,7 @@ func (n *Node) emitPending() {
 func (n *Node) PostMemo(b []byte) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.fsm.addUserMsg(b)
+	n.fsm.addMemo(b)
 }
 
 // Updates returns a channel from which Updates can be received. The channel is

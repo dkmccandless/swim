@@ -20,9 +20,9 @@ type stateMachine struct {
 
 	order roundrobinrandom.Order[id]
 
-	msgQueue     *rpq.Queue[id, *message]
-	userMsgQueue *rpq.Queue[id, *message]
-	seenUserMsgs map[id]bool
+	msgQueue  *rpq.Queue[id, *message]
+	memoQueue *rpq.Queue[id, *message]
+	seenMemos map[id]bool
 
 	pingTarget id
 	gotAck     bool
@@ -64,10 +64,10 @@ const (
 	alive msgType = iota
 	suspected
 	failed
-	userMsg
+	memo
 )
 
-// A message carries membership information or user-defined data.
+// A message carries membership information or memo data.
 type message struct {
 	Type   msgType
 	NodeID id
@@ -76,7 +76,7 @@ type message struct {
 	// for alive, suspected, failed
 	Incarnation int `json:",omitempty"`
 
-	// for userMsg
+	// for memo
 	MemoID id     `json:",omitempty"`
 	Body   []byte `json:",omitempty"`
 }
@@ -96,7 +96,7 @@ func newStateMachine() *stateMachine {
 		suspects: make(map[id]int),
 		removed:  make(map[id]bool),
 
-		seenUserMsgs: make(map[id]bool),
+		seenMemos: make(map[id]bool),
 
 		pingReqs:  make(map[id]id),
 		nPingReqs: 2, // TODO: scale according to permissible false positive probability
@@ -110,7 +110,7 @@ func newStateMachine() *stateMachine {
 		return int(math.Ceil(3 * math.Log(float64(len(s.members)+1))))
 	}
 	s.msgQueue = rpq.New[id, *message](logn3)
-	s.userMsgQueue = rpq.New[id, *message](logn3)
+	s.memoQueue = rpq.New[id, *message](logn3)
 	return s
 }
 
@@ -188,12 +188,12 @@ func (s *stateMachine) processMsg(m *message) bool {
 			s.msgQueue.Upsert(s.id, s.aliveMessage())
 		}
 		return m.Type != failed
-	case m.Type == userMsg:
-		if s.seenUserMsgs[m.MemoID] {
+	case m.Type == memo:
+		if s.seenMemos[m.MemoID] {
 			return true
 		}
-		s.seenUserMsgs[m.MemoID] = true
-		s.userMsgQueue.Upsert(m.MemoID, m)
+		s.seenMemos[m.MemoID] = true
+		s.memoQueue.Upsert(m.MemoID, m)
 		s.pendingMemos = append(s.pendingMemos, Memo{
 			SrcID:   string(m.NodeID),
 			SrcAddr: m.Addr,
@@ -292,7 +292,7 @@ func (s *stateMachine) isMemberNews(m *message) bool {
 	if m == nil {
 		return false
 	}
-	if m.Type == userMsg {
+	if m.Type == memo {
 		return false
 	}
 	id := m.NodeID
@@ -335,8 +335,8 @@ func (s *stateMachine) makePacket(typ packetType, dst, target id, targetAddr net
 		s.members[dst].contacted = true
 		msgs = append(msgs, s.aliveMessage())
 	}
-	if s.userMsgQueue.Len() > 0 {
-		msgs = append(msgs, s.userMsgQueue.Pop())
+	if s.memoQueue.Len() > 0 {
+		msgs = append(msgs, s.memoQueue.Pop())
 	}
 	return packet{
 		Type:       typ,
@@ -386,11 +386,11 @@ func (s *stateMachine) failedMessage(id id) *message {
 	}
 }
 
-// addUserMsg adds a new userMsg carrying b to the user message queue.
-func (s *stateMachine) addUserMsg(b []byte) {
+// addMemo adds a new memo carrying b to the user message queue.
+func (s *stateMachine) addMemo(b []byte) {
 	memoID := randID()
-	s.userMsgQueue.Upsert(memoID, &message{
-		Type:   userMsg,
+	s.memoQueue.Upsert(memoID, &message{
+		Type:   memo,
 		NodeID: s.id,
 		MemoID: memoID,
 		Body:   b,
