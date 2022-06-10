@@ -69,9 +69,9 @@ const (
 
 // A message carries membership information or user-defined data.
 type message struct {
-	Type msgType
-	ID   id
-	Addr netip.AddrPort
+	Type   msgType
+	NodeID id
+	Addr   netip.AddrPort
 
 	// for alive, suspected, failed
 	Incarnation int `json:",omitempty"`
@@ -182,7 +182,7 @@ func (s *stateMachine) receive(p packet) ([]packet, bool) {
 // to participate in the protocol.
 func (s *stateMachine) processMsg(m *message) bool {
 	switch {
-	case m.ID == s.id:
+	case m.NodeID == s.id:
 		if m.Type == suspected && m.Incarnation == s.incarnation {
 			s.incarnation++
 			s.msgQueue.Upsert(s.id, s.aliveMessage())
@@ -195,20 +195,20 @@ func (s *stateMachine) processMsg(m *message) bool {
 		s.seenUserMsgs[m.MemoID] = true
 		s.userMsgQueue.Upsert(m.MemoID, m)
 		s.pendingMemos = append(s.pendingMemos, Memo{
-			SrcID:   string(m.ID),
+			SrcID:   string(m.NodeID),
 			SrcAddr: m.Addr,
 			Body:    m.Body,
 		})
 	case s.isMemberNews(m):
 		s.update(m)
-		s.msgQueue.Upsert(m.ID, m)
+		s.msgQueue.Upsert(m.NodeID, m)
 	}
 	return true
 }
 
 // update updates a node's membership status based on a received message.
 func (s *stateMachine) update(m *message) {
-	id := m.ID
+	id := m.NodeID
 	if m.Type == failed {
 		s.remove(id)
 		return
@@ -295,15 +295,16 @@ func (s *stateMachine) isMemberNews(m *message) bool {
 	if m.Type == userMsg {
 		return false
 	}
-	if !s.isMember(m.ID) {
-		return !s.removed[m.ID]
+	id := m.NodeID
+	if !s.isMember(id) {
+		return !s.removed[id]
 	}
 	if m.Type == failed {
 		return true
 	}
-	incarnation := s.members[m.ID].incarnation
+	incarnation := s.members[id].incarnation
 	if m.Incarnation == incarnation {
-		return m.Type == suspected && !s.isSuspect(m.ID)
+		return m.Type == suspected && !s.isSuspect(id)
 	}
 	return m.Incarnation > incarnation
 }
@@ -351,7 +352,7 @@ func (s *stateMachine) makePacket(typ packetType, dst, target id, targetAddr net
 func (s *stateMachine) makeMessagePing(m *message) packet {
 	return packet{
 		Type:       ping,
-		remoteID:   m.ID,
+		remoteID:   m.NodeID,
 		remoteAddr: m.Addr,
 		Msgs:       []*message{m},
 	}
@@ -361,7 +362,7 @@ func (s *stateMachine) makeMessagePing(m *message) packet {
 func (s *stateMachine) aliveMessage() *message {
 	return &message{
 		Type:        alive,
-		ID:          s.id,
+		NodeID:      s.id,
 		Incarnation: s.incarnation,
 	}
 }
@@ -370,7 +371,7 @@ func (s *stateMachine) aliveMessage() *message {
 func (s *stateMachine) suspectedMessage(id id) *message {
 	return &message{
 		Type:        suspected,
-		ID:          id,
+		NodeID:      id,
 		Incarnation: s.members[id].incarnation,
 		Addr:        s.members[id].addr,
 	}
@@ -379,9 +380,9 @@ func (s *stateMachine) suspectedMessage(id id) *message {
 // failedMessage returns a message reporting an id as failed.
 func (s *stateMachine) failedMessage(id id) *message {
 	return &message{
-		Type: failed,
-		ID:   id,
-		Addr: s.members[id].addr,
+		Type:   failed,
+		NodeID: id,
+		Addr:   s.members[id].addr,
 	}
 }
 
@@ -390,7 +391,7 @@ func (s *stateMachine) addUserMsg(b []byte) {
 	memoID := randID()
 	s.userMsgQueue.Upsert(memoID, &message{
 		Type:   userMsg,
-		ID:     s.id,
+		NodeID: s.id,
 		MemoID: memoID,
 		Body:   b,
 	})
