@@ -8,8 +8,7 @@ import (
 	"github.com/dkmccandless/swim/internal/rpq"
 )
 
-// A stateMachine is a finite state machine that implements the SWIM
-// protocol.
+// A stateMachine is a finite state machine that implements the SWIM protocol.
 type stateMachine struct {
 	id          id
 	incarnation int
@@ -161,8 +160,7 @@ func (s *stateMachine) timeout() []packet {
 
 // receive processes an incoming packet and returns any necessary outgoing
 // packets, and a boolean value reporting whether the stateMachine can continue
-// participating in the protocol. receive may produce pending Updates or
-// Messages.
+// participating in the protocol. receive may produce pending Updates or Memos.
 func (s *stateMachine) receive(p packet) ([]packet, bool) {
 	if s.removed[p.remoteID] {
 		return nil, true
@@ -386,7 +384,7 @@ func (s *stateMachine) failedMessage(id id) *message {
 	}
 }
 
-// addMemo adds a new memo carrying b to the user message queue.
+// addMemo adds a new memo carrying b to the memo queue.
 func (s *stateMachine) addMemo(b []byte) {
 	memoID := randID()
 	s.memoQueue.Upsert(memoID, &message{
