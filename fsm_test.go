@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestIsNews(t *testing.T) {
+func TestIsMemberNews(t *testing.T) {
 	s := &stateMachine{
 		members: map[id]*profile{
 			"abc": {incarnation: 0},

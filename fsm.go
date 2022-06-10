@@ -31,8 +31,8 @@ type stateMachine struct {
 	nPingReqs int
 	maxMsgs   int
 
-	pendingUpdates  []Update
-	pendingMessages []Message
+	pendingUpdates []Update
+	pendingMemos   []Memo
 }
 
 // A packetType describes the meaning of a packet.
@@ -77,8 +77,8 @@ type message struct {
 	Incarnation int `json:",omitempty"`
 
 	// for userMsg
-	MessageID id     `json:",omitempty"`
-	Body      []byte `json:",omitempty"`
+	MemoID id     `json:",omitempty"`
+	Body   []byte `json:",omitempty"`
 }
 
 // A profile contains an ID's membership information.
@@ -189,12 +189,12 @@ func (s *stateMachine) processMsg(m *message) bool {
 		}
 		return m.Type != failed
 	case m.Type == userMsg:
-		if s.seenUserMsgs[m.MessageID] {
+		if s.seenUserMsgs[m.MemoID] {
 			return true
 		}
-		s.seenUserMsgs[m.MessageID] = true
-		s.userMsgQueue.Upsert(m.MessageID, m)
-		s.pendingMessages = append(s.pendingMessages, Message{
+		s.seenUserMsgs[m.MemoID] = true
+		s.userMsgQueue.Upsert(m.MemoID, m)
+		s.pendingMemos = append(s.pendingMemos, Memo{
 			SrcID:   string(m.ID),
 			SrcAddr: m.Addr,
 			Body:    m.Body,
@@ -387,11 +387,11 @@ func (s *stateMachine) failedMessage(id id) *message {
 
 // addUserMsg adds a new userMsg carrying b to the user message queue.
 func (s *stateMachine) addUserMsg(b []byte) {
-	messageID := randID()
-	s.userMsgQueue.Upsert(messageID, &message{
-		Type:      userMsg,
-		ID:        s.id,
-		MessageID: messageID,
-		Body:      b,
+	memoID := randID()
+	s.userMsgQueue.Upsert(memoID, &message{
+		Type:   userMsg,
+		ID:     s.id,
+		MemoID: memoID,
+		Body:   b,
 	})
 }

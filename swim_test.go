@@ -44,18 +44,18 @@ func TestDetectJoinAndFail(t *testing.T) {
 	diff.Test(t, t.Errorf, <-nodes[1].Updates(), update(2, false), opt)
 }
 
-func TestMessage(t *testing.T) {
-	opt := diff.ZeroFields[Message]("SrcAddr")
+func TestPostMemo(t *testing.T) {
+	opt := diff.ZeroFields[Memo]("SrcAddr")
 	nodes := launch(3)
 	addr0 := nodes[0].localAddrPort()
 	nodes[1].Join(addr0)
 	nodes[2].Join(addr0)
 
 	s := "Hello, SWIM!"
-	nodes[0].Message([]byte(s))
-	msg := Message{SrcID: string(nodes[0].id), Body: []byte(s)}
-	diff.Test(t, t.Errorf, <-nodes[1].Messages(), msg, opt)
-	diff.Test(t, t.Errorf, <-nodes[2].Messages(), msg, opt)
+	nodes[0].PostMemo([]byte(s))
+	m := Memo{SrcID: string(nodes[0].id), Body: []byte(s)}
+	diff.Test(t, t.Errorf, <-nodes[1].Memos(), m, opt)
+	diff.Test(t, t.Errorf, <-nodes[2].Memos(), m, opt)
 }
 
 func launch(n int) []*Node {

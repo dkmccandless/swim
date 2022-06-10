@@ -23,8 +23,8 @@ type Update struct {
 	IsMember bool
 }
 
-// A Message carries user-defined data.
-type Message struct {
+// A Memo carries user-defined data.
+type Memo struct {
 	SrcID   string
 	SrcAddr netip.AddrPort
 	Body    []byte
@@ -38,7 +38,7 @@ type Node struct {
 	id       id // copy of fsm.id
 	conn     *net.UDPConn
 	updates  bufchan.Chan[Update]
-	messages bufchan.Chan[Message]
+	memos    bufchan.Chan[Memo]
 	stopTick chan struct{}
 }
 
@@ -54,7 +54,7 @@ func Start() (*Node, error) {
 		id:       fsm.id,
 		conn:     conn,
 		updates:  bufchan.Make[Update](),
-		messages: bufchan.Make[Message](),
+		memos:    bufchan.Make[Memo](),
 		stopTick: make(chan struct{}),
 	}
 	go n.runReceive()
@@ -156,7 +156,7 @@ func (n *Node) receive(p packet) ([]packet, bool) {
 	return n.fsm.receive(p)
 }
 
-// emitPending sends all pending Updates and Messages on their respective
+// emitPending sends all pending Updates and Memos on their respective
 // channels.
 func (n *Node) emitPending() {
 	n.mu.Lock()
@@ -165,14 +165,14 @@ func (n *Node) emitPending() {
 		n.updates.Send() <- u
 	}
 	n.fsm.pendingUpdates = nil
-	for _, m := range n.fsm.pendingMessages {
-		n.messages.Send() <- m
+	for _, m := range n.fsm.pendingMemos {
+		n.memos.Send() <- m
 	}
-	n.fsm.pendingMessages = nil
+	n.fsm.pendingMemos = nil
 }
 
-// Message disseminates b throughout the network.
-func (n *Node) Message(b []byte) {
+// PostMemo disseminates b throughout the network.
+func (n *Node) PostMemo(b []byte) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.fsm.addUserMsg(b)
@@ -184,10 +184,10 @@ func (n *Node) Updates() <-chan Update {
 	return n.updates.Receive()
 }
 
-// Messages returns a channel from which Messages can be received. The channel
-// is closed when n ceases participation in the protocol.
-func (n *Node) Messages() <-chan Message {
-	return n.messages.Receive()
+// Memos returns a channel from which Memos can be received. The channel is
+// closed when n ceases participation in the protocol.
+func (n *Node) Memos() <-chan Memo {
+	return n.memos.Receive()
 }
 
 // ID returns n's ID on the network.
