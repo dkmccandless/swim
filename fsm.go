@@ -189,6 +189,9 @@ func (s *stateMachine) processMsg(m *message) bool {
 		}
 		return m.Type != failed
 	case m.Type == userMsg:
+		if s.seenUserMsgs[m.MessageID] {
+			return true
+		}
 		s.seenUserMsgs[m.MessageID] = true
 		s.userMsgQueue.Upsert(m.MessageID, m)
 		s.pendingMessages = append(s.pendingMessages, Message{
