@@ -65,7 +65,7 @@ const (
 // A message carries membership information.
 type message struct {
 	Type        status
-	ID          id
+	NodeID      id
 	Incarnation int
 	Addr        netip.AddrPort
 }
@@ -174,7 +174,7 @@ func (s *stateMachine) receive(p packet) ([]packet, []Update, bool) {
 // nil. The boolean return value is false if the stateMachine has been declared
 // failed, and true otherwise.
 func (s *stateMachine) processMsg(m *message) (*Update, bool) {
-	if m.ID == s.id {
+	if m.NodeID == s.id {
 		switch m.Type {
 		case suspected:
 			if m.Incarnation == s.incarnation {
@@ -189,14 +189,14 @@ func (s *stateMachine) processMsg(m *message) (*Update, bool) {
 	if !s.isNews(m) {
 		return nil, true
 	}
-	s.msgQueue.Upsert(m.ID, m)
+	s.msgQueue.Upsert(m.NodeID, m)
 	return s.update(m), true
 }
 
 // update updates a node's membership status based on a received message and
 // returns an Update if the membership list changed.
 func (s *stateMachine) update(m *message) *Update {
-	id := m.ID
+	id := m.NodeID
 	if m.Type == failed {
 		return s.remove(id)
 	}
@@ -278,15 +278,16 @@ func (s *stateMachine) isNews(m *message) bool {
 	if m == nil {
 		return false
 	}
-	if !s.isMember(m.ID) {
-		return !s.removed[m.ID]
+	id := m.NodeID
+	if !s.isMember(id) {
+		return !s.removed[id]
 	}
 	if m.Type == failed {
 		return true
 	}
-	incarnation := s.members[m.ID].incarnation
+	incarnation := s.members[id].incarnation
 	if m.Incarnation == incarnation {
-		return m.Type == suspected && !s.isSuspect(m.ID)
+		return m.Type == suspected && !s.isSuspect(id)
 	}
 	return m.Incarnation > incarnation
 }
@@ -332,7 +333,7 @@ func (s *stateMachine) makePacket(typ packetType, dst, target id, targetAddr net
 func (s *stateMachine) makeMessagePing(m *message) packet {
 	return packet{
 		Type:       ping,
-		remoteID:   m.ID,
+		remoteID:   m.NodeID,
 		remoteAddr: m.Addr,
 		Msgs:       []*message{m},
 	}
@@ -342,7 +343,7 @@ func (s *stateMachine) makeMessagePing(m *message) packet {
 func (s *stateMachine) aliveMessage() *message {
 	return &message{
 		Type:        alive,
-		ID:          s.id,
+		NodeID:      s.id,
 		Incarnation: s.incarnation,
 	}
 }
@@ -351,7 +352,7 @@ func (s *stateMachine) aliveMessage() *message {
 func (s *stateMachine) suspectedMessage(id id) *message {
 	return &message{
 		Type:        suspected,
-		ID:          id,
+		NodeID:      id,
 		Incarnation: s.members[id].incarnation,
 		Addr:        s.members[id].addr,
 	}
@@ -360,8 +361,8 @@ func (s *stateMachine) suspectedMessage(id id) *message {
 // failedMessage returns a message reporting an id as failed.
 func (s *stateMachine) failedMessage(id id) *message {
 	return &message{
-		Type: failed,
-		ID:   id,
-		Addr: s.members[id].addr,
+		Type:   failed,
+		NodeID: id,
+		Addr:   s.members[id].addr,
 	}
 }
