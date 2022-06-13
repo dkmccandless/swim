@@ -29,6 +29,8 @@ type stateMachine struct {
 
 	nPingReqs int
 	maxMsgs   int
+
+	updates chan<- Update
 }
 
 // A packetType describes the meaning of a packet.
@@ -77,7 +79,9 @@ type profile struct {
 	addr        netip.AddrPort
 }
 
-func newStateMachine() *stateMachine {
+// newStateMachine initializes a new stateMachine emitting Updates on the
+// provided channel, which must never block.
+func newStateMachine(updates chan<- Update) *stateMachine {
 	s := &stateMachine{
 		id: randID(),
 
@@ -88,6 +92,8 @@ func newStateMachine() *stateMachine {
 		pingReqs:  make(map[id]id),
 		nPingReqs: 2, // TODO: scale according to permissible false positive probability
 		maxMsgs:   6, // TODO: revisit guaranteed MTU constraint
+
+		updates: updates,
 	}
 	s.msgQueue = rpq.New[id, *message](func() int {
 		// A small multiple of the logarithm of the size of the network
@@ -98,20 +104,17 @@ func newStateMachine() *stateMachine {
 }
 
 // tick begins a new protocol period and returns a ping, as well as packets to
-// notify any members declared suspected or failed and corresponding
-// Updates.
-func (s *stateMachine) tick() ([]packet, []Update) {
+// notify any members declared suspected or failed.
+func (s *stateMachine) tick() []packet {
 	var ps []packet
 
-	var failed []Update
 	for id := range s.suspects {
 		if s.suspects[id]++; s.suspects[id] >= s.suspicionTimeout() {
 			// Suspicion timeout
 			m := s.failedMessage(id)
 			s.msgQueue.Upsert(id, m)
 			ps = append(ps, s.makeMessagePing(m))
-			u := s.remove(id)
-			failed = append(failed, *u)
+			s.remove(id)
 		}
 	}
 
@@ -129,9 +132,9 @@ func (s *stateMachine) tick() ([]packet, []Update) {
 	s.gotAck = false
 	s.pingReqs = map[id]id{}
 	if s.pingTarget == "" {
-		return ps, failed
+		return ps
 	}
-	return append(ps, s.makePing(s.pingTarget)), failed
+	return append(ps, s.makePing(s.pingTarget))
 }
 
 // timeout produces ping requests if an ack has not been received from the
@@ -147,64 +150,53 @@ func (s *stateMachine) timeout() []packet {
 	return ps
 }
 
-// receive processes an incoming packet and produces any necessary outgoing
-// packets and Updates in response. The boolean return value reports whether
-// the stateMachine can continue participating in the protocol.
-func (s *stateMachine) receive(p packet) ([]packet, []Update, bool) {
+// receive processes an incoming packet and returns any necessary outgoing
+// packets and a boolean value reporting whether the stateMachine can continue
+// participating in the protocol.
+func (s *stateMachine) receive(p packet) ([]packet, bool) {
 	if s.removed[p.remoteID] {
-		return nil, nil, true
+		return nil, true
 	}
-	var us []Update
 	for _, m := range p.Msgs {
 		if m.Addr == (netip.AddrPort{}) {
 			m.Addr = p.remoteAddr
 		}
-		u, ok := s.processMsg(m)
-		if !ok {
-			return nil, nil, false
-		}
-		if u != nil {
-			us = append(us, *u)
-		}
-	}
-	return s.processPacketType(p), us, true
-}
-
-// processMsg returns an Update if m results in a change of membership, or else
-// nil. The boolean return value is false if the stateMachine has been declared
-// failed, and true otherwise.
-func (s *stateMachine) processMsg(m *message) (*Update, bool) {
-	if m.NodeID == s.id {
-		switch m.Type {
-		case suspected:
-			if m.Incarnation == s.incarnation {
-				s.incarnation++
-				s.msgQueue.Upsert(s.id, s.aliveMessage())
-			}
-		case failed:
+		if !s.processMsg(m) {
 			return nil, false
 		}
-		return nil, true
 	}
-	if !s.isNews(m) {
-		return nil, true
-	}
-	s.msgQueue.Upsert(m.NodeID, m)
-	return s.update(m), true
+	return s.processPacketType(p), true
 }
 
-// update updates a node's membership status based on a received message and
-// returns an Update if the membership list changed.
-func (s *stateMachine) update(m *message) *Update {
+// processMsg processes a received message and reports whether the stateMachine
+// can continue participating in the protocol.
+func (s *stateMachine) processMsg(m *message) bool {
+	if m.NodeID == s.id {
+		if m.Type == suspected && m.Incarnation == s.incarnation {
+			s.incarnation++
+			s.msgQueue.Upsert(s.id, s.aliveMessage())
+		}
+		return m.Type != failed
+	}
+	if s.isNews(m) {
+		s.msgQueue.Upsert(m.NodeID, m)
+		s.updateStatus(m)
+	}
+	return true
+}
+
+// updateStatus updates a node's membership status based on a received message
+// and emits an Update if the membership list changed.
+func (s *stateMachine) updateStatus(m *message) {
 	id := m.NodeID
 	if m.Type == failed {
-		return s.remove(id)
+		s.remove(id)
+		return
 	}
-	var u *Update
 	if !s.isMember(id) {
 		s.members[id] = new(profile)
 		s.order.Add(id)
-		u = &Update{ID: string(id), IsMember: true, Addr: m.Addr}
+		s.updates <- Update{ID: string(id), IsMember: true, Addr: m.Addr}
 	}
 	s.members[id].incarnation = m.Incarnation
 	s.members[id].addr = m.Addr
@@ -214,20 +206,18 @@ func (s *stateMachine) update(m *message) *Update {
 	case suspected:
 		s.suspects[id] = 0
 	}
-	return u
 }
 
-// remove removes an id from the list and returns an Update if it was a member.
-func (s *stateMachine) remove(id id) *Update {
+// remove removes an id from the list and emits an Update if it was a member.
+func (s *stateMachine) remove(id id) {
 	if !s.isMember(id) {
-		return nil
+		return
 	}
-	u := &Update{ID: string(id), IsMember: false, Addr: s.members[id].addr}
+	s.updates <- Update{ID: string(id), IsMember: false, Addr: s.members[id].addr}
 	delete(s.members, id)
 	delete(s.suspects, id)
 	s.removed[id] = true
 	s.order.Remove(id)
-	return u
 }
 
 // processPacketType processes an incoming packet and returns any necessary
