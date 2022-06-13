@@ -8,7 +8,8 @@ import (
 	"github.com/dkmccandless/swim/internal/rpq"
 )
 
-// A stateMachine is a finite state machine that implements the SWIM protocol.
+// A stateMachine is a finite state machine that implements the SWIM
+// protocol.
 type stateMachine struct {
 	id          id
 	incarnation int
@@ -25,7 +26,8 @@ type stateMachine struct {
 
 	pingTarget id
 	gotAck     bool
-	pingReqs   map[id]id
+
+	pingReqs map[id]id
 
 	nPingReqs int
 	maxMsgs   int
@@ -132,6 +134,7 @@ func (s *stateMachine) tick() []packet {
 			s.remove(id)
 		}
 	}
+
 	if id := s.pingTarget; !s.gotAck && s.isMember(id) {
 		// Expired ping target
 		if !s.isSuspect(id) {
@@ -141,6 +144,7 @@ func (s *stateMachine) tick() []packet {
 		s.msgQueue.Upsert(id, m)
 		ps = append(ps, s.makeMessagePing(m))
 	}
+
 	s.gotAck = false
 	s.pingReqs = map[id]id{}
 	s.pingTarget = s.order.Next()
@@ -164,8 +168,8 @@ func (s *stateMachine) timeout() []packet {
 }
 
 // receive processes an incoming packet and returns any necessary outgoing
-// packets and a boolean value reporting whether s can continue participating
-// in the protocol.
+// packets and a boolean value reporting whether the stateMachine can continue
+// participating in the protocol.
 func (s *stateMachine) receive(p packet) ([]packet, bool) {
 	if s.removed[p.remoteID] {
 		return nil, true
@@ -181,8 +185,8 @@ func (s *stateMachine) receive(p packet) ([]packet, bool) {
 	return s.processPacketType(p), true
 }
 
-// processMsg processes a received message and reports whether s can continue
-// participating in the protocol.
+// processMsg processes a received message and reports whether the stateMachine
+// can continue participating in the protocol.
 func (s *stateMachine) processMsg(m *message) bool {
 	switch {
 	case m.NodeID == s.id:
@@ -358,7 +362,7 @@ func (s *stateMachine) makeMessagePing(m *message) packet {
 	}
 }
 
-// aliveMessage returns a message reporting s as alive.
+// aliveMessage returns a message reporting the stateMachine as alive.
 func (s *stateMachine) aliveMessage() *message {
 	return &message{
 		Type:        alive,

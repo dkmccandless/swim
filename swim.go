@@ -19,8 +19,8 @@ const (
 // An Update describes a change to the network membership.
 type Update struct {
 	ID       string
-	Addr     netip.AddrPort
 	IsMember bool
+	Addr     netip.AddrPort
 }
 
 // A Memo carries user-defined data.
@@ -32,7 +32,7 @@ type Memo struct {
 
 // A Node is a network node participating in the SWIM protocol.
 type Node struct {
-	mu  sync.Mutex // protects the following field
+	mu  sync.Mutex // protects the following fields
 	fsm *stateMachine
 
 	id       id // copy of fsm.id
@@ -76,8 +76,7 @@ func (n *Node) runTick() {
 			tickPeriod := time.Duration(float64(tickAverage) * (0.9 + 0.2*rand.Float64()))
 			periodTimer.Reset(tickPeriod)
 			pingTimer.Reset(pingTimeout)
-			ps := n.tick()
-			n.send(ps)
+			n.send(n.tick())
 		case <-pingTimer.C:
 			n.send(n.timeout())
 		case <-n.stopTick:
@@ -140,7 +139,7 @@ func (n *Node) runReceive() {
 		if err := json.Unmarshal(b[:len], &e); err != nil {
 			continue
 		}
-		e.P.remoteID = e.SrcID
+		e.P.remoteID = e.FromID
 		e.P.remoteAddr = addr
 		ps, ok := n.receive(e.P)
 		if !ok {
@@ -186,8 +185,8 @@ func (n *Node) LocalAddr() netip.AddrPort {
 }
 
 type envelope struct {
-	SrcID id
-	P     packet
+	FromID id
+	P      packet
 }
 
 func stoppedTimer() *time.Timer {
