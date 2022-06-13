@@ -394,4 +394,5 @@ func (s *stateMachine) addMemo(b []byte) {
 		MemoID: memoID,
 		Body:   b,
 	})
+	s.seenMemos[memoID] = true
 }
