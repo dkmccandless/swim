@@ -32,7 +32,7 @@ type Memo struct {
 
 // A Node is a network node participating in the SWIM protocol.
 type Node struct {
-	mu  sync.Mutex // protects the following fields
+	mu  sync.Mutex // protects the following field
 	fsm *stateMachine
 
 	id       id // copy of fsm.id
