@@ -30,8 +30,8 @@ type stateMachine struct {
 	nPingReqs int
 	maxMsgs   int
 
-	pendingUpdates []Update
-	pendingMemos   []Memo
+	updates      chan<- Update
+	pendingMemos []Memo
 }
 
 // A packetType describes the meaning of a packet.
@@ -87,7 +87,9 @@ type profile struct {
 	addr        netip.AddrPort
 }
 
-func newStateMachine() *stateMachine {
+// newStateMachine initializes a new stateMachine emitting Updates on the
+// provided channel, which must never block.
+func newStateMachine(updates chan<- Update) *stateMachine {
 	s := &stateMachine{
 		id: randID(),
 
@@ -100,6 +102,8 @@ func newStateMachine() *stateMachine {
 		pingReqs:  make(map[id]id),
 		nPingReqs: 2, // TODO: scale according to permissible false positive probability
 		maxMsgs:   6, // TODO: revisit guaranteed MTU constraint
+
+		updates: updates,
 	}
 
 	// logn3 returns 3*log(n) rounded up, where n is the size of the network.
@@ -114,10 +118,10 @@ func newStateMachine() *stateMachine {
 }
 
 // tick begins a new protocol period and returns a ping, as well as packets to
-// notify any members declared suspected or failed. tick may produce pending
-// Updates.
+// notify any members declared suspected or failed.
 func (s *stateMachine) tick() []packet {
 	var ps []packet
+
 	for id := range s.suspects {
 		if s.suspects[id]++; s.suspects[id] >= s.suspicionTimeout() {
 			// Suspicion timeout
@@ -159,25 +163,25 @@ func (s *stateMachine) timeout() []packet {
 }
 
 // receive processes an incoming packet and returns any necessary outgoing
-// packets, and a boolean value reporting whether the stateMachine can continue
-// participating in the protocol. receive may produce pending Updates or Memos.
+// packets and a boolean value reporting whether s can continue participating
+// in the protocol.
 func (s *stateMachine) receive(p packet) ([]packet, bool) {
 	if s.removed[p.remoteID] {
 		return nil, true
 	}
-	for _, msg := range p.Msgs {
-		if msg.Addr == (netip.AddrPort{}) {
-			msg.Addr = p.remoteAddr
+	for _, m := range p.Msgs {
+		if m.Addr == (netip.AddrPort{}) {
+			m.Addr = p.remoteAddr
 		}
-		if !s.processMsg(msg) {
+		if !s.processMsg(m) {
 			return nil, false
 		}
 	}
 	return s.processPacketType(p), true
 }
 
-// processMsg processes an incoming message and reports whether s can continue
-// to participate in the protocol.
+// processMsg processes a received message and reports whether s can continue
+// participating in the protocol.
 func (s *stateMachine) processMsg(m *message) bool {
 	switch {
 	case m.NodeID == s.id:
@@ -188,7 +192,7 @@ func (s *stateMachine) processMsg(m *message) bool {
 		return m.Type != failed
 	case m.Type == memo:
 		if s.seenMemos[m.MemoID] {
-			return true
+			break
 		}
 		s.seenMemos[m.MemoID] = true
 		s.memoQueue.Upsert(m.MemoID, m)
@@ -198,14 +202,15 @@ func (s *stateMachine) processMsg(m *message) bool {
 			Body:    m.Body,
 		})
 	case s.isMemberNews(m):
-		s.update(m)
+		s.updateStatus(m)
 		s.msgQueue.Upsert(m.NodeID, m)
 	}
 	return true
 }
 
-// update updates a node's membership status based on a received message.
-func (s *stateMachine) update(m *message) {
+// updateStatus updates a node's membership status based on a received message
+// and emits an Update if the membership list changed.
+func (s *stateMachine) updateStatus(m *message) {
 	id := m.NodeID
 	if m.Type == failed {
 		s.remove(id)
@@ -214,9 +219,7 @@ func (s *stateMachine) update(m *message) {
 	if !s.isMember(id) {
 		s.members[id] = new(profile)
 		s.order.Add(id)
-		s.pendingUpdates = append(s.pendingUpdates, Update{
-			ID: string(id), Addr: m.Addr, IsMember: true,
-		})
+		s.updates <- Update{ID: string(id), IsMember: true, Addr: m.Addr}
 	}
 	s.members[id].incarnation = m.Incarnation
 	s.members[id].addr = m.Addr
@@ -228,14 +231,12 @@ func (s *stateMachine) update(m *message) {
 	}
 }
 
-// remove removes an id from the membership list.
+// remove removes an id from the list and emits an Update if it was a member.
 func (s *stateMachine) remove(id id) {
 	if !s.isMember(id) {
 		return
 	}
-	s.pendingUpdates = append(s.pendingUpdates, Update{
-		ID: string(id), Addr: s.members[id].addr, IsMember: false,
-	})
+	s.updates <- Update{ID: string(id), IsMember: false, Addr: s.members[id].addr}
 	delete(s.members, id)
 	delete(s.suspects, id)
 	s.removed[id] = true

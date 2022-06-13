@@ -48,12 +48,13 @@ func Start() (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	fsm := newStateMachine()
+	updates := bufchan.Make[Update]()
+	fsm := newStateMachine(updates.Send())
 	n := &Node{
 		fsm:      fsm,
 		id:       fsm.id,
 		conn:     conn,
-		updates:  bufchan.Make[Update](),
+		updates:  updates,
 		memos:    bufchan.Make[Memo](),
 		stopTick: make(chan struct{}),
 	}
@@ -156,15 +157,10 @@ func (n *Node) receive(p packet) ([]packet, bool) {
 	return n.fsm.receive(p)
 }
 
-// emitPending sends all pending Updates and Memos on their respective
-// channels.
+// emitPending sends all pending Memos.
 func (n *Node) emitPending() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	for _, u := range n.fsm.pendingUpdates {
-		n.updates.Send() <- u
-	}
-	n.fsm.pendingUpdates = nil
 	for _, m := range n.fsm.pendingMemos {
 		n.memos.Send() <- m
 	}
