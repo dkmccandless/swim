@@ -145,9 +145,9 @@ func (s *stateMachine) tick() []packet {
 		ps = append(ps, s.makeMessagePing(m))
 	}
 
+	s.pingTarget = s.order.Next()
 	s.gotAck = false
 	s.pingReqs = map[id]id{}
-	s.pingTarget = s.order.Next()
 	if s.pingTarget == "" {
 		return ps
 	}
