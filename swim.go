@@ -40,12 +40,13 @@ func Start() (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	fsm := newStateMachine()
+	updates := bufchan.Make[Update]()
+	fsm := newStateMachine(updates.Send())
 	n := &Node{
 		fsm:      fsm,
 		id:       fsm.id,
 		conn:     conn,
-		updates:  bufchan.Make[Update](),
+		updates:  updates,
 		stopTick: make(chan struct{}),
 	}
 	go n.runReceive()
@@ -76,10 +77,8 @@ func (n *Node) runTick() {
 
 func (n *Node) tick() []packet {
 	n.mu.Lock()
-	ps, us := n.fsm.tick()
-	n.mu.Unlock()
-	n.sendUpdates(us)
-	return ps
+	defer n.mu.Unlock()
+	return n.fsm.tick()
 }
 
 func (n *Node) timeout() []packet {
@@ -132,25 +131,18 @@ func (n *Node) runReceive() {
 		}
 		e.P.remoteID = e.FromID
 		e.P.remoteAddr = addr
-		ps, us, ok := n.receive(e.P)
+		ps, ok := n.receive(e.P)
 		if !ok {
 			return
 		}
-		n.sendUpdates(us)
 		n.send(ps)
 	}
 }
 
-func (n *Node) receive(p packet) ([]packet, []Update, bool) {
+func (n *Node) receive(p packet) ([]packet, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.fsm.receive(p)
-}
-
-func (n *Node) sendUpdates(us []Update) {
-	for _, u := range us {
-		n.updates.Send() <- u
-	}
 }
 
 // Updates returns a channel from which Updates can be received. The channel is
