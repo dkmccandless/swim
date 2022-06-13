@@ -30,8 +30,8 @@ type stateMachine struct {
 	nPingReqs int
 	maxMsgs   int
 
-	updates      chan<- Update
-	pendingMemos []Memo
+	updates chan<- Update
+	memos   chan<- Memo
 }
 
 // A packetType describes the meaning of a packet.
@@ -89,7 +89,7 @@ type profile struct {
 
 // newStateMachine initializes a new stateMachine emitting Updates on the
 // provided channel, which must never block.
-func newStateMachine(updates chan<- Update) *stateMachine {
+func newStateMachine(updates chan<- Update, memos chan<- Memo) *stateMachine {
 	s := &stateMachine{
 		id: randID(),
 
@@ -104,6 +104,7 @@ func newStateMachine(updates chan<- Update) *stateMachine {
 		maxMsgs:   6, // TODO: revisit guaranteed MTU constraint
 
 		updates: updates,
+		memos:   memos,
 	}
 
 	// logn3 returns 3*log(n) rounded up, where n is the size of the network.
@@ -196,11 +197,11 @@ func (s *stateMachine) processMsg(m *message) bool {
 		}
 		s.seenMemos[m.MemoID] = true
 		s.memoQueue.Upsert(m.MemoID, m)
-		s.pendingMemos = append(s.pendingMemos, Memo{
+		s.memos <- Memo{
 			SrcID:   string(m.NodeID),
 			SrcAddr: m.Addr,
 			Body:    m.Body,
-		})
+		}
 	case s.isMemberNews(m):
 		s.updateStatus(m)
 		s.msgQueue.Upsert(m.NodeID, m)

@@ -49,13 +49,14 @@ func Start() (*Node, error) {
 		return nil, err
 	}
 	updates := bufchan.Make[Update]()
-	fsm := newStateMachine(updates.Send())
+	memos := bufchan.Make[Memo]()
+	fsm := newStateMachine(updates.Send(), memos.Send())
 	n := &Node{
 		fsm:      fsm,
 		id:       fsm.id,
 		conn:     conn,
 		updates:  updates,
-		memos:    bufchan.Make[Memo](),
+		memos:    memos,
 		stopTick: make(chan struct{}),
 	}
 	go n.runReceive()
@@ -76,7 +77,6 @@ func (n *Node) runTick() {
 			periodTimer.Reset(tickPeriod)
 			pingTimer.Reset(pingTimeout)
 			ps := n.tick()
-			n.emitPending()
 			n.send(ps)
 		case <-pingTimer.C:
 			n.send(n.timeout())
@@ -146,7 +146,6 @@ func (n *Node) runReceive() {
 		if !ok {
 			return
 		}
-		n.emitPending()
 		n.send(ps)
 	}
 }
@@ -155,16 +154,6 @@ func (n *Node) receive(p packet) ([]packet, bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.fsm.receive(p)
-}
-
-// emitPending sends all pending Memos.
-func (n *Node) emitPending() {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	for _, m := range n.fsm.pendingMemos {
-		n.memos.Send() <- m
-	}
-	n.fsm.pendingMemos = nil
 }
 
 // PostMemo disseminates b throughout the network.
