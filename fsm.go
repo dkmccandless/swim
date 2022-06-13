@@ -358,7 +358,7 @@ func (s *stateMachine) makeMessagePing(m *message) packet {
 	}
 }
 
-// aliveMessage returns a message reporting the stateMachine as alive.
+// aliveMessage returns a message reporting s as alive.
 func (s *stateMachine) aliveMessage() *message {
 	return &message{
 		Type:        alive,
