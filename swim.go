@@ -19,8 +19,8 @@ const (
 // An Update describes a change to the network membership.
 type Update struct {
 	ID       string
-	IsMember bool
 	Addr     netip.AddrPort
+	IsMember bool
 }
 
 // A Memo carries user-defined data.
@@ -32,7 +32,7 @@ type Memo struct {
 
 // A Node is a network node participating in the SWIM protocol.
 type Node struct {
-	mu  sync.Mutex // protects the following fields
+	mu  sync.Mutex // protects the following field
 	fsm *stateMachine
 
 	id       id // copy of fsm.id
@@ -139,7 +139,7 @@ func (n *Node) runReceive() {
 		if err := json.Unmarshal(b[:len], &e); err != nil {
 			continue
 		}
-		e.P.remoteID = e.FromID
+		e.P.remoteID = e.SrcID
 		e.P.remoteAddr = addr
 		ps, ok := n.receive(e.P)
 		if !ok {
@@ -185,8 +185,8 @@ func (n *Node) LocalAddr() netip.AddrPort {
 }
 
 type envelope struct {
-	FromID id
-	P      packet
+	SrcID id
+	P     packet
 }
 
 func stoppedTimer() *time.Timer {
