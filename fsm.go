@@ -20,7 +20,9 @@ type stateMachine struct {
 
 	order roundrobinrandom.Order[id]
 
-	msgQueue *rpq.Queue[id, *message]
+	msgQueue  *rpq.Queue[id, *message]
+	memoQueue *rpq.Queue[id, *message]
+	seenMemos map[id]bool
 
 	pingTarget id
 	gotAck     bool
@@ -31,6 +33,7 @@ type stateMachine struct {
 	maxMsgs   int
 
 	updates chan<- Update
+	memos   chan<- Memo
 }
 
 // A packetType describes the meaning of a packet.
@@ -49,27 +52,34 @@ type packet struct {
 	remoteAddr netip.AddrPort
 
 	// for ping requests
-	TargetID   id
-	TargetAddr netip.AddrPort
+	TargetID   id             `json:",omitempty"`
+	TargetAddr netip.AddrPort `json:",omitempty"`
 
-	Msgs []*message
+	Msgs []*message `json:",omitempty"`
 }
 
-// A status describes a node's membership status.
-type status byte
+// A msgType describes the meaning of a message.
+type msgType byte
 
 const (
-	alive status = iota
+	alive msgType = iota
 	suspected
 	failed
+	memo
 )
 
-// A message carries membership information.
+// A message carries membership information or memo data.
 type message struct {
-	Type        status
-	NodeID      id
-	Incarnation int
-	Addr        netip.AddrPort
+	Type   msgType
+	NodeID id
+	Addr   netip.AddrPort
+
+	// for alive, suspected, failed
+	Incarnation int `json:",omitempty"`
+
+	// for memo
+	MemoID id     `json:",omitempty"`
+	Body   []byte `json:",omitempty"`
 }
 
 // A profile contains an ID's membership information.
@@ -81,7 +91,7 @@ type profile struct {
 
 // newStateMachine initializes a new stateMachine emitting Updates on the
 // provided channel, which must never block.
-func newStateMachine(updates chan<- Update) *stateMachine {
+func newStateMachine(updates chan<- Update, memos chan<- Memo) *stateMachine {
 	s := &stateMachine{
 		id: randID(),
 
@@ -89,17 +99,24 @@ func newStateMachine(updates chan<- Update) *stateMachine {
 		suspects: make(map[id]int),
 		removed:  make(map[id]bool),
 
+		seenMemos: make(map[id]bool),
+
 		pingReqs:  make(map[id]id),
 		nPingReqs: 2, // TODO: scale according to permissible false positive probability
 		maxMsgs:   6, // TODO: revisit guaranteed MTU constraint
 
 		updates: updates,
+		memos:   memos,
 	}
-	s.msgQueue = rpq.New[id, *message](func() int {
-		// A small multiple of the logarithm of the size of the network
-		// suffices to ensure reliable dissemination.
-		return int(3*math.Log(float64(len(s.members)+1))) + 1
-	})
+
+	// logn3 returns 3*log(n) rounded up, where n is the size of the network.
+	// Each message must be sent a small multiple of log(n) times to ensure
+	// reliable dissemination.
+	logn3 := func() int {
+		return int(math.Ceil(3 * math.Log(float64(len(s.members)+1))))
+	}
+	s.msgQueue = rpq.New[id, *message](logn3)
+	s.memoQueue = rpq.New[id, *message](logn3)
 	return s
 }
 
@@ -171,16 +188,27 @@ func (s *stateMachine) receive(p packet) ([]packet, bool) {
 // processMsg processes a received message and reports whether the stateMachine
 // can continue participating in the protocol.
 func (s *stateMachine) processMsg(m *message) bool {
-	if m.NodeID == s.id {
+	switch {
+	case m.NodeID == s.id:
 		if m.Type == suspected && m.Incarnation == s.incarnation {
 			s.incarnation++
 			s.msgQueue.Upsert(s.id, s.aliveMessage())
 		}
 		return m.Type != failed
-	}
-	if s.isNews(m) {
-		s.msgQueue.Upsert(m.NodeID, m)
+	case m.Type == memo:
+		if s.seenMemos[m.MemoID] {
+			break
+		}
+		s.seenMemos[m.MemoID] = true
+		s.memoQueue.Upsert(m.MemoID, m)
+		s.memos <- Memo{
+			SrcID:   string(m.NodeID),
+			SrcAddr: m.Addr,
+			Body:    m.Body,
+		}
+	case s.isMemberNews(m):
 		s.updateStatus(m)
+		s.msgQueue.Upsert(m.NodeID, m)
 	}
 	return true
 }
@@ -263,9 +291,12 @@ func (s *stateMachine) isSuspect(id id) bool {
 	return ok
 }
 
-// isNews reports whether m contains new membership status information.
-func (s *stateMachine) isNews(m *message) bool {
+// isMemberNews reports whether m contains new membership status information.
+func (s *stateMachine) isMemberNews(m *message) bool {
 	if m == nil {
+		return false
+	}
+	if m.Type == memo {
 		return false
 	}
 	id := m.NodeID
@@ -302,12 +333,14 @@ func (s *stateMachine) makeReqAck(dst, target id, targetAddr netip.AddrPort) pac
 // not been sent to before, one of the messages is an introductory alive
 // message.
 func (s *stateMachine) makePacket(typ packetType, dst, target id, targetAddr netip.AddrPort) packet {
+	// TODO: treat message sizes vs. packet capacity in more detail
 	var msgs []*message
 	if !s.members[dst].contacted {
 		s.members[dst].contacted = true
-		msgs = append(s.msgQueue.PopN(s.maxMsgs-1), s.aliveMessage())
-	} else {
-		msgs = s.msgQueue.PopN(s.maxMsgs)
+		msgs = append(msgs, s.aliveMessage())
+	}
+	if s.memoQueue.Len() > 0 {
+		msgs = append(msgs, s.memoQueue.Pop())
 	}
 	return packet{
 		Type:       typ,
@@ -315,7 +348,7 @@ func (s *stateMachine) makePacket(typ packetType, dst, target id, targetAddr net
 		remoteAddr: s.members[dst].addr,
 		TargetID:   target,
 		TargetAddr: targetAddr,
-		Msgs:       msgs,
+		Msgs:       append(msgs, s.msgQueue.PopN(s.maxMsgs-len(msgs))...),
 	}
 }
 
@@ -355,4 +388,16 @@ func (s *stateMachine) failedMessage(id id) *message {
 		NodeID: id,
 		Addr:   s.members[id].addr,
 	}
+}
+
+// addMemo adds a new memo carrying b to the memo queue.
+func (s *stateMachine) addMemo(b []byte) {
+	memoID := randID()
+	s.memoQueue.Upsert(memoID, &message{
+		Type:   memo,
+		NodeID: s.id,
+		MemoID: memoID,
+		Body:   b,
+	})
+	s.seenMemos[memoID] = true
 }

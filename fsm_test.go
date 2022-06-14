@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestIsNews(t *testing.T) {
+func TestIsMemberNews(t *testing.T) {
 	s := &stateMachine{
 		members: map[id]*profile{
 			"abc": {incarnation: 0},
@@ -50,7 +50,7 @@ func TestIsNews(t *testing.T) {
 		{&message{Type: failed, NodeID: "mno"}, true},
 		{&message{Type: failed, NodeID: "xyz"}, false},
 	} {
-		if got := s.isNews(tt.m); got != tt.want {
+		if got := s.isMemberNews(tt.m); got != tt.want {
 			t.Errorf("isNews(%+v): got %v, expected %v", tt.m, got, tt.want)
 		}
 	}

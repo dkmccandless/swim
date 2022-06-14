@@ -8,9 +8,8 @@ import (
 	"kr.dev/diff"
 )
 
-var opt = diff.ZeroFields[Update]("Addr")
-
 func TestDetectJoinAndFail(t *testing.T) {
+	opt := diff.ZeroFields[Update]("Addr")
 	nodes := launch(2)
 	addr0 := nodes[0].localAddrPort()
 	update := func(n int, isMember bool) Update {
@@ -43,6 +42,24 @@ func TestDetectJoinAndFail(t *testing.T) {
 
 	nodes[2].conn.Close()
 	diff.Test(t, t.Errorf, <-nodes[1].Updates(), update(2, false), opt)
+}
+
+func TestPostMemo(t *testing.T) {
+	opt := diff.ZeroFields[Memo]("SrcAddr")
+	nodes := launch(3)
+	addr0 := nodes[0].localAddrPort()
+	nodes[1].Join(addr0)
+	nodes[2].Join(addr0)
+
+	s := "Hello, SWIM!"
+	nodes[0].PostMemo([]byte(s))
+	m := Memo{SrcID: string(nodes[0].id), Body: []byte(s)}
+	diff.Test(t, t.Errorf, <-nodes[1].Memos(), m, opt)
+	diff.Test(t, t.Errorf, <-nodes[2].Memos(), m, opt)
+	nodes[1].PostMemo([]byte(s))
+	m = Memo{SrcID: string(nodes[1].id), Body: []byte(s)}
+	diff.Test(t, t.Errorf, <-nodes[0].Memos(), m, opt)
+	diff.Test(t, t.Errorf, <-nodes[2].Memos(), m, opt)
 }
 
 func launch(n int) []*Node {

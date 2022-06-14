@@ -23,6 +23,13 @@ type Update struct {
 	Addr     netip.AddrPort
 }
 
+// A Memo carries user-defined data.
+type Memo struct {
+	SrcID   string
+	SrcAddr netip.AddrPort
+	Body    []byte
+}
+
 // A Node is a network node participating in the SWIM protocol.
 type Node struct {
 	mu  sync.Mutex // protects the following fields
@@ -31,6 +38,7 @@ type Node struct {
 	id       id // copy of fsm.id
 	conn     *net.UDPConn
 	updates  bufchan.Chan[Update]
+	memos    bufchan.Chan[Memo]
 	stopTick chan struct{}
 }
 
@@ -41,12 +49,14 @@ func Start() (*Node, error) {
 		return nil, err
 	}
 	updates := bufchan.Make[Update]()
-	fsm := newStateMachine(updates.Send())
+	memos := bufchan.Make[Memo]()
+	fsm := newStateMachine(updates.Send(), memos.Send())
 	n := &Node{
 		fsm:      fsm,
 		id:       fsm.id,
 		conn:     conn,
 		updates:  updates,
+		memos:    memos,
 		stopTick: make(chan struct{}),
 	}
 	go n.runReceive()
@@ -145,10 +155,23 @@ func (n *Node) receive(p packet) ([]packet, bool) {
 	return n.fsm.receive(p)
 }
 
+// PostMemo disseminates b throughout the network.
+func (n *Node) PostMemo(b []byte) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.fsm.addMemo(b)
+}
+
 // Updates returns a channel from which Updates can be received. The channel is
 // closed when n ceases participation in the protocol.
 func (n *Node) Updates() <-chan Update {
 	return n.updates.Receive()
+}
+
+// Memos returns a channel from which Memos can be received. The channel is
+// closed when n ceases participation in the protocol.
+func (n *Node) Memos() <-chan Memo {
+	return n.memos.Receive()
 }
 
 // ID returns n's ID on the network.
