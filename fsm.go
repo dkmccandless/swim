@@ -107,14 +107,8 @@ func newStateMachine(updates chan<- Update, memos chan<- Memo) *stateMachine {
 		memos:   memos,
 	}
 
-	// logn3 returns 3*log(n) rounded up, where n is the size of the network.
-	// Each message must be sent a small multiple of log(n) times to ensure
-	// reliable dissemination.
-	logn3 := func() int {
-		return int(math.Ceil(3 * math.Log(float64(len(s.members)+1))))
-	}
-	s.msgQueue = rpq.New[id, *message](logn3)
-	s.memoQueue = rpq.New[id, *message](logn3)
+	s.msgQueue = rpq.New[id, *message](s.logn3)
+	s.memoQueue = rpq.New[id, *message](s.logn3)
 	return s
 }
 
@@ -123,7 +117,7 @@ func newStateMachine(updates chan<- Update, memos chan<- Memo) *stateMachine {
 func (s *stateMachine) tick() []packet {
 	var ps []packet
 	for id := range s.suspects {
-		if s.suspects[id]++; s.suspects[id] >= s.suspicionTimeout() {
+		if s.suspects[id]++; s.suspects[id] >= s.logn3() {
 			// Suspicion timeout
 			m := s.failedMessage(id)
 			s.msgQueue.Upsert(id, m)
@@ -268,10 +262,12 @@ func (s *stateMachine) processPacketType(p packet) []packet {
 	return nil
 }
 
-// suspicionTimeout returns the number of periods to wait before declaring a
-// suspect failed.
-func (s *stateMachine) suspicionTimeout() int {
-	return int(3*math.Log(float64(len(s.members)))) + 1
+// logn3 returns 3*log(n) rounded up, where n is the size of the network.
+// Each message must be sent a small multiple of log(n) times to ensure
+// reliable dissemination. Consequently, this is also the number of profile
+// periods to wait before declaring a suspect failed.
+func (s *stateMachine) logn3() int {
+	return int(math.Ceil(3 * math.Log(float64(len(s.members)+1))))
 }
 
 // isMember reports whether an id is a member.
