@@ -2,6 +2,7 @@ package swim
 
 import (
 	"encoding/json"
+	"errors"
 	"math/rand"
 	"net"
 	"net/netip"
@@ -155,11 +156,17 @@ func (n *Node) receive(p packet) ([]packet, bool) {
 	return n.fsm.receive(p)
 }
 
-// PostMemo disseminates b throughout the network.
-func (n *Node) PostMemo(b []byte) {
+// PostMemo disseminates b throughout the network. To ensure transmission
+// within a single UDP packet, PostMemo enforces a length limit of 500 bytes;
+// if len(b) exceeds this, PostMemo returns an error instead.
+func (n *Node) PostMemo(b []byte) error {
+	if len(b) > 500 {
+		return errors.New("body too long")
+	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.fsm.addMemo(b)
+	return nil
 }
 
 // Updates returns a channel from which Updates can be received. The channel is
