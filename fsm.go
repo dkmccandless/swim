@@ -264,8 +264,9 @@ func (s *stateMachine) processPacketType(p packet) []packet {
 
 // logn2 returns 2*log(n) rounded up, where n is the size of the network.
 // Each message must be sent a small multiple of log(n) times to ensure
-// reliable dissemination. Consequently, this is also the number of profile
-// periods to wait before declaring a suspect failed.
+// reliable dissemination. Consequently, this is also the dissemination
+// timescale, and by extension the number of profile periods to wait before
+// declaring a suspect failed.
 func (s *stateMachine) logn2() int {
 	return int(math.Ceil(2 * math.Log(float64(len(s.members)+1))))
 }
