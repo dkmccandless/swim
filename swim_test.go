@@ -44,7 +44,7 @@ func TestDetectJoinAndFail(t *testing.T) {
 	diff.Test(t, t.Errorf, <-nodes[1].Updates(), update(Failed, 2), opt)
 }
 
-func TestPost(t *testing.T) {
+func TestPostMemo(t *testing.T) {
 	opt := diff.ZeroFields[Update]("Addr")
 	nodes := launch(3)
 	addr0 := nodes[0].localAddrPort()
