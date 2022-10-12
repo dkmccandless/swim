@@ -190,10 +190,11 @@ func (s *stateMachine) processMsg(m *message) bool {
 		}
 		s.seenMemos[m.MemoID] = true
 		s.memoQueue.Upsert(m.MemoID, m)
-		s.memos <- Memo{
-			NodeID: string(m.NodeID),
-			Addr:   m.Addr,
-			Body:   m.Body,
+		s.updates <- Update{
+			NodeID:   string(m.NodeID),
+			Addr:     m.Addr,
+			IsMember: true,
+			Body:     m.Body,
 		}
 	case s.isMemberNews(m):
 		s.updateStatus(m)

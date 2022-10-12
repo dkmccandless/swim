@@ -45,7 +45,7 @@ func TestDetectJoinAndFail(t *testing.T) {
 }
 
 func TestPost(t *testing.T) {
-	opt := diff.ZeroFields[Memo]("Addr")
+	opt := diff.ZeroFields[Update]("Addr")
 	nodes := launch(3)
 	addr0 := nodes[0].localAddrPort()
 	nodes[1].Join(addr0)
@@ -53,13 +53,13 @@ func TestPost(t *testing.T) {
 
 	s := "Hello, SWIM!"
 	nodes[0].Post([]byte(s))
-	m := Memo{NodeID: string(nodes[0].id), Body: []byte(s)}
-	diff.Test(t, t.Errorf, <-nodes[1].Memos(), m, opt)
-	diff.Test(t, t.Errorf, <-nodes[2].Memos(), m, opt)
+	u := Update{NodeID: string(nodes[0].id), IsMember: true, Body: []byte(s)}
+	diff.Test(t, t.Errorf, <-nodes[1].Updates(), u, opt)
+	diff.Test(t, t.Errorf, <-nodes[2].Updates(), u, opt)
 	nodes[1].Post([]byte(s))
-	m = Memo{NodeID: string(nodes[1].id), Body: []byte(s)}
-	diff.Test(t, t.Errorf, <-nodes[0].Memos(), m, opt)
-	diff.Test(t, t.Errorf, <-nodes[2].Memos(), m, opt)
+	u = Update{NodeID: string(nodes[1].id), IsMember: true, Body: []byte(s)}
+	diff.Test(t, t.Errorf, <-nodes[0].Updates(), u, opt)
+	diff.Test(t, t.Errorf, <-nodes[2].Updates(), u, opt)
 }
 
 func launch(n int) []*Node {
