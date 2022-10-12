@@ -17,19 +17,35 @@ const (
 	pingTimeout = 200 * time.Millisecond
 )
 
-// An Update describes a change to the network membership.
+// An Update carries network membership information or user-defined data.
 type Update struct {
-	ID       string
-	Addr     netip.AddrPort
-	IsMember bool
+	// Type describes the meaning of the Update.
+	Type UpdateType
+
+	// NodeID is the ID of the source node.
+	NodeID string
+
+	// Addr is the address of the source node.
+	Addr netip.AddrPort
+
+	// Memo carries user-defined data sent by a node identified by NodeID using
+	// PostMemo. It is defined if Type is SentMemo, and nil otherwise.
+	Memo []byte
 }
 
-// A Memo carries user-defined data.
-type Memo struct {
-	SrcID   string
-	SrcAddr netip.AddrPort
-	Body    []byte
-}
+// An UpdateType describes the meaning of an Update.
+type UpdateType byte
+
+const (
+	// Joined indicates that a node has joined the network.
+	Joined UpdateType = iota
+
+	// SentMemo indicates that a node has sent a memo.
+	SentMemo
+
+	// Failed indicates that a node has left the network.
+	Failed
+)
 
 // A Node is a network node participating in the SWIM protocol.
 type Node struct {
@@ -39,7 +55,6 @@ type Node struct {
 	id       id // copy of fsm.id
 	conn     *net.UDPConn
 	updates  bufchan.Chan[Update]
-	memos    bufchan.Chan[Memo]
 	stopTick chan struct{}
 }
 
@@ -50,14 +65,12 @@ func Start() (*Node, error) {
 		return nil, err
 	}
 	updates := bufchan.Make[Update]()
-	memos := bufchan.Make[Memo]()
-	fsm := newStateMachine(updates.Send(), memos.Send())
+	fsm := newStateMachine(updates.Send())
 	n := &Node{
 		fsm:      fsm,
 		id:       fsm.id,
 		conn:     conn,
 		updates:  updates,
-		memos:    memos,
 		stopTick: make(chan struct{}),
 	}
 	go n.runReceive()
@@ -156,7 +169,7 @@ func (n *Node) receive(p packet) ([]packet, bool) {
 	return n.fsm.receive(p)
 }
 
-// PostMemo disseminates b throughout the network. To ensure transmission
+// PostMemo disseminates a memo throughout the network. To ensure transmission
 // within a single UDP packet, PostMemo enforces a length limit of 500 bytes;
 // if len(b) exceeds this, PostMemo returns an error instead.
 func (n *Node) PostMemo(b []byte) error {
@@ -173,12 +186,6 @@ func (n *Node) PostMemo(b []byte) error {
 // closed when n ceases participation in the protocol.
 func (n *Node) Updates() <-chan Update {
 	return n.updates.Receive()
-}
-
-// Memos returns a channel from which Memos can be received. The channel is
-// closed when n ceases participation in the protocol.
-func (n *Node) Memos() <-chan Memo {
-	return n.memos.Receive()
 }
 
 // ID returns n's ID on the network.

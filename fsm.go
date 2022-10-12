@@ -31,7 +31,6 @@ type stateMachine struct {
 	maxMsgs   int
 
 	updates chan<- Update
-	memos   chan<- Memo
 }
 
 // A packetType describes the meaning of a packet.
@@ -89,7 +88,7 @@ type profile struct {
 
 // newStateMachine initializes a new stateMachine emitting Updates on the
 // provided channel, which must never block.
-func newStateMachine(updates chan<- Update, memos chan<- Memo) *stateMachine {
+func newStateMachine(updates chan<- Update) *stateMachine {
 	s := &stateMachine{
 		id: randID(),
 
@@ -104,7 +103,6 @@ func newStateMachine(updates chan<- Update, memos chan<- Memo) *stateMachine {
 		maxMsgs:   6, // TODO: revisit guaranteed MTU constraint
 
 		updates: updates,
-		memos:   memos,
 	}
 
 	s.msgQueue = rpq.New[id, *message](s.disseminationFactor)
@@ -190,10 +188,11 @@ func (s *stateMachine) processMsg(m *message) bool {
 		}
 		s.seenMemos[m.MemoID] = true
 		s.memoQueue.Upsert(m.MemoID, m)
-		s.memos <- Memo{
-			SrcID:   string(m.NodeID),
-			SrcAddr: m.Addr,
-			Body:    m.Body,
+		s.updates <- Update{
+			Type:   SentMemo,
+			NodeID: string(m.NodeID),
+			Addr:   m.Addr,
+			Memo:   m.Body,
 		}
 	case s.isMemberNews(m):
 		s.updateStatus(m)
@@ -213,7 +212,7 @@ func (s *stateMachine) updateStatus(m *message) {
 	if !s.isMember(id) {
 		s.members[id] = new(profile)
 		s.order.Add(id)
-		s.updates <- Update{ID: string(id), IsMember: true, Addr: m.Addr}
+		s.updates <- Update{Type: Joined, NodeID: string(id), Addr: m.Addr}
 	}
 	s.members[id].incarnation = m.Incarnation
 	s.members[id].addr = m.Addr
@@ -230,7 +229,7 @@ func (s *stateMachine) remove(id id) {
 	if !s.isMember(id) {
 		return
 	}
-	s.updates <- Update{ID: string(id), IsMember: false, Addr: s.members[id].addr}
+	s.updates <- Update{Type: Failed, NodeID: string(id), Addr: s.members[id].addr}
 	delete(s.members, id)
 	delete(s.suspects, id)
 	s.removed[id] = true
