@@ -19,11 +19,33 @@ const (
 
 // An Update carries network membership information or user-defined data.
 type Update struct {
-	NodeID   string
-	Addr     netip.AddrPort
-	IsMember bool
-	Body     []byte
+	// Type describes the meaning of the Update.
+	Type UpdateType
+
+	// NodeID is the ID of the source node.
+	NodeID string
+
+	// Addr is the address of the source node.
+	Addr netip.AddrPort
+
+	// Memo carries user-defined data sent by a node identified by NodeID using
+	// PostMemo. It is defined if Type is SentMemo, and nil otherwise.
+	Memo []byte
 }
+
+// An UpdateType describes the meaning of an Update.
+type UpdateType byte
+
+const (
+	// Joined indicates that a node has joined the network.
+	Joined UpdateType = iota
+
+	// SentMemo indicates that a node has sent a memo.
+	SentMemo
+
+	// Failed indicates that a node has left the network.
+	Failed
+)
 
 // A Memo carries user-defined data.
 type Memo struct {
@@ -157,10 +179,10 @@ func (n *Node) receive(p packet) ([]packet, bool) {
 	return n.fsm.receive(p)
 }
 
-// Post disseminates b throughout the network. To ensure transmission within a
-// single UDP packet, Post enforces a length limit of 500 bytes; if len(b)
-// exceeds this, Post returns an error instead.
-func (n *Node) Post(b []byte) error {
+// PostMemo disseminates a memo throughout the network. To ensure transmission
+// within a single UDP packet, PostMemo enforces a length limit of 500 bytes;
+// if len(b) exceeds this, PostMemo returns an error instead.
+func (n *Node) PostMemo(b []byte) error {
 	if len(b) > 500 {
 		return errors.New("body too long")
 	}

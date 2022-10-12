@@ -191,10 +191,10 @@ func (s *stateMachine) processMsg(m *message) bool {
 		s.seenMemos[m.MemoID] = true
 		s.memoQueue.Upsert(m.MemoID, m)
 		s.updates <- Update{
-			NodeID:   string(m.NodeID),
-			Addr:     m.Addr,
-			IsMember: true,
-			Body:     m.Body,
+			Type:   SentMemo,
+			NodeID: string(m.NodeID),
+			Addr:   m.Addr,
+			Memo:   m.Body,
 		}
 	case s.isMemberNews(m):
 		s.updateStatus(m)
@@ -214,7 +214,7 @@ func (s *stateMachine) updateStatus(m *message) {
 	if !s.isMember(id) {
 		s.members[id] = new(profile)
 		s.order.Add(id)
-		s.updates <- Update{NodeID: string(id), IsMember: true, Addr: m.Addr}
+		s.updates <- Update{Type: Joined, NodeID: string(id), Addr: m.Addr}
 	}
 	s.members[id].incarnation = m.Incarnation
 	s.members[id].addr = m.Addr
@@ -231,7 +231,7 @@ func (s *stateMachine) remove(id id) {
 	if !s.isMember(id) {
 		return
 	}
-	s.updates <- Update{NodeID: string(id), IsMember: false, Addr: s.members[id].addr}
+	s.updates <- Update{Type: Failed, NodeID: string(id), Addr: s.members[id].addr}
 	delete(s.members, id)
 	delete(s.suspects, id)
 	s.removed[id] = true
