@@ -17,18 +17,19 @@ const (
 	pingTimeout = 200 * time.Millisecond
 )
 
-// An Update describes a change to the network membership.
+// An Update carries network membership information or user-defined data.
 type Update struct {
-	ID       string
+	NodeID   string
 	Addr     netip.AddrPort
 	IsMember bool
+	Body     []byte
 }
 
 // A Memo carries user-defined data.
 type Memo struct {
-	SrcID   string
-	SrcAddr netip.AddrPort
-	Body    []byte
+	NodeID string
+	Addr   netip.AddrPort
+	Body   []byte
 }
 
 // A Node is a network node participating in the SWIM protocol.
