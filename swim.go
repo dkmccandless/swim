@@ -47,13 +47,6 @@ const (
 	Failed
 )
 
-// A Memo carries user-defined data.
-type Memo struct {
-	NodeID string
-	Addr   netip.AddrPort
-	Body   []byte
-}
-
 // A Node is a network node participating in the SWIM protocol.
 type Node struct {
 	mu  sync.Mutex // protects the following field
@@ -62,7 +55,6 @@ type Node struct {
 	id       id // copy of fsm.id
 	conn     *net.UDPConn
 	updates  bufchan.Chan[Update]
-	memos    bufchan.Chan[Memo]
 	stopTick chan struct{}
 }
 
@@ -73,14 +65,12 @@ func Start() (*Node, error) {
 		return nil, err
 	}
 	updates := bufchan.Make[Update]()
-	memos := bufchan.Make[Memo]()
-	fsm := newStateMachine(updates.Send(), memos.Send())
+	fsm := newStateMachine(updates.Send())
 	n := &Node{
 		fsm:      fsm,
 		id:       fsm.id,
 		conn:     conn,
 		updates:  updates,
-		memos:    memos,
 		stopTick: make(chan struct{}),
 	}
 	go n.runReceive()
@@ -196,12 +186,6 @@ func (n *Node) PostMemo(b []byte) error {
 // closed when n ceases participation in the protocol.
 func (n *Node) Updates() <-chan Update {
 	return n.updates.Receive()
-}
-
-// Memos returns a channel from which Memos can be received. The channel is
-// closed when n ceases participation in the protocol.
-func (n *Node) Memos() <-chan Memo {
-	return n.memos.Receive()
 }
 
 // ID returns n's ID on the network.

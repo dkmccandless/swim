@@ -31,7 +31,6 @@ type stateMachine struct {
 	maxMsgs   int
 
 	updates chan<- Update
-	memos   chan<- Memo
 }
 
 // A packetType describes the meaning of a packet.
@@ -89,7 +88,7 @@ type profile struct {
 
 // newStateMachine initializes a new stateMachine emitting Updates on the
 // provided channel, which must never block.
-func newStateMachine(updates chan<- Update, memos chan<- Memo) *stateMachine {
+func newStateMachine(updates chan<- Update) *stateMachine {
 	s := &stateMachine{
 		id: randID(),
 
@@ -104,7 +103,6 @@ func newStateMachine(updates chan<- Update, memos chan<- Memo) *stateMachine {
 		maxMsgs:   6, // TODO: revisit guaranteed MTU constraint
 
 		updates: updates,
-		memos:   memos,
 	}
 
 	s.msgQueue = rpq.New[id, *message](s.disseminationFactor)
