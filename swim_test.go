@@ -50,6 +50,12 @@ func TestPost(t *testing.T) {
 	addr0 := nodes[0].localAddrPort()
 	nodes[1].Join(addr0)
 	nodes[2].Join(addr0)
+	<-nodes[0].Updates()
+	<-nodes[0].Updates()
+	<-nodes[1].Updates()
+	<-nodes[1].Updates()
+	<-nodes[2].Updates()
+	<-nodes[2].Updates()
 
 	s := "Hello, SWIM!"
 	nodes[0].Post([]byte(s))
