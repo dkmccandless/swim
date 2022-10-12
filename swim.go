@@ -157,10 +157,10 @@ func (n *Node) receive(p packet) ([]packet, bool) {
 	return n.fsm.receive(p)
 }
 
-// PostMemo disseminates b throughout the network. To ensure transmission
-// within a single UDP packet, PostMemo enforces a length limit of 500 bytes;
-// if len(b) exceeds this, PostMemo returns an error instead.
-func (n *Node) PostMemo(b []byte) error {
+// Post disseminates b throughout the network. To ensure transmission within a
+// single UDP packet, Post enforces a length limit of 500 bytes; if len(b)
+// exceeds this, Post returns an error instead.
+func (n *Node) Post(b []byte) error {
 	if len(b) > 500 {
 		return errors.New("body too long")
 	}
