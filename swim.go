@@ -23,39 +23,36 @@ type Node struct {
 	id       id // copy of fsm.id
 	conn     *net.UDPConn
 	stopTick chan struct{}
+
+	handleJoin func(id string, addr netip.AddrPort)
+	handleMemo func(id string, addr netip.AddrPort, memo []byte)
+	handleFail func(id string)
 }
 
 // Start creates a new Node and starts running the SWIM protocol on it.
-func Start(
-	handleJoin func(id string, addr netip.AddrPort),
-	handleMemo func(id string, addr netip.AddrPort, memo []byte),
-	handleFail func(id string),
-) (*Node, error) {
+func Start() (*Node, error) {
 	conn, err := net.ListenUDP("udp", nil)
 	if err != nil {
 		return nil, err
 	}
+	n := &Node{
+		conn:     conn,
+		stopTick: make(chan struct{}),
 
-	if handleJoin == nil {
-		handleJoin = func(string, netip.AddrPort) {}
-	}
-	if handleMemo == nil {
-		handleMemo = func(string, netip.AddrPort, []byte) {}
-	}
-	if handleFail == nil {
-		handleFail = func(string) {}
+		handleJoin: func(string, netip.AddrPort) {},
+		handleMemo: func(string, netip.AddrPort, []byte) {},
+		handleFail: func(string) {},
 	}
 
 	wgs := make(map[id]*struct{ join, memo sync.WaitGroup })
-
-	fsm := newStateMachine(
+	n.fsm = newStateMachine(
 		func(id id, addr netip.AddrPort) {
 			wg := &struct{ join, memo sync.WaitGroup }{}
 			wgs[id] = wg
 			wg.join.Add(1)
 			go func() {
 				defer wg.join.Done()
-				handleJoin(string(id), addr)
+				n.handleJoin(string(id), addr)
 			}()
 		},
 		func(id id, addr netip.AddrPort, memo []byte) {
@@ -64,26 +61,36 @@ func Start(
 			go func() {
 				defer wg.memo.Done()
 				wg.join.Wait()
-				handleMemo(string(id), addr, memo)
+				n.handleMemo(string(id), addr, memo)
 			}()
 		},
 		func(id id) {
 			wg := wgs[id]
 			go func() {
 				wg.memo.Wait()
-				handleFail(string(id))
+				n.handleFail(string(id))
 			}()
 		},
 	)
-	n := &Node{
-		fsm:      fsm,
-		id:       fsm.id,
-		conn:     conn,
-		stopTick: make(chan struct{}),
-	}
+	n.id = n.fsm.id
 	go n.runReceive()
 	go n.runTick()
 	return n, nil
+}
+
+// OnJoin instructs n to call f when a node joins the network.
+func (n *Node) OnJoin(f func(id string, addr netip.AddrPort)) {
+	n.handleJoin = f
+}
+
+// OnMemo instructs n to call f when a node sends a memo.
+func (n *Node) OnMemo(f func(id string, addr netip.AddrPort, memo []byte)) {
+	n.handleMemo = f
+}
+
+// OnFail instructs n to call f when a node leaves the network.
+func (n *Node) OnFail(f func(id string)) {
+	n.handleFail = f
 }
 
 func (n *Node) runTick() {

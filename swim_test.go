@@ -22,6 +22,42 @@ const (
 	failedUpdate
 )
 
+func TestOnJoin(t *testing.T) {
+	n0, err := Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr0 := n0.localAddrPort()
+
+	met1 := make(chan string)
+	n0.OnJoin(func(id string, _ netip.AddrPort) {
+		met1 <- id
+	})
+
+	n1, err := Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n1.Join(addr0)
+	diff.Test(t, t.Errorf, <-met1, n1.ID())
+
+	type record struct {
+		id  string
+		met bool
+	}
+	met2 := make(chan record)
+	n0.OnJoin(func(id string, _ netip.AddrPort) {
+		met2 <- record{id, true}
+	})
+
+	n2, err := Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n2.Join(addr0)
+	diff.Test(t, t.Errorf, (<-met2).id, n2.ID())
+}
+
 func TestDetectJoinAndFail(t *testing.T) {
 	nodes, chans := launch(2)
 	addr0 := nodes[0].localAddrPort()
@@ -85,21 +121,20 @@ func launch(n int) ([]*Node, []chan update) {
 	for i := range nodes {
 		i := i
 		chans[i] = make(chan update)
-		node, err := Start(
-			func(id string, _ netip.AddrPort) {
-				chans[i] <- update{typ: joinedUpdate, nodeID: id}
-			},
-			func(id string, _ netip.AddrPort, memo []byte) {
-				chans[i] <- update{typ: sentMemoUpdate, nodeID: id, memo: memo}
-			},
-			func(id string) {
-				chans[i] <- update{typ: failedUpdate, nodeID: id}
-			},
-		)
+		n, err := Start()
 		if err != nil {
 			panic(err)
 		}
-		nodes[i] = node
+		n.OnJoin(func(id string, _ netip.AddrPort) {
+			chans[i] <- update{typ: joinedUpdate, nodeID: id}
+		})
+		n.OnMemo(func(id string, _ netip.AddrPort, memo []byte) {
+			chans[i] <- update{typ: sentMemoUpdate, nodeID: id, memo: memo}
+		})
+		n.OnFail(func(id string) {
+			chans[i] <- update{typ: failedUpdate, nodeID: id}
+		})
+		nodes[i] = n
 	}
 	return nodes, chans
 }
