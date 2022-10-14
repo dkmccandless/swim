@@ -8,43 +8,11 @@ import (
 	"net/netip"
 	"sync"
 	"time"
-
-	"github.com/dkmccandless/swim/bufchan"
 )
 
 const (
 	tickAverage = time.Second
 	pingTimeout = 200 * time.Millisecond
-)
-
-// An Update carries network membership information or user-defined data.
-type Update struct {
-	// Type describes the meaning of the Update.
-	Type UpdateType
-
-	// NodeID is the ID of the source node.
-	NodeID string
-
-	// Addr is the address of the source node.
-	Addr netip.AddrPort
-
-	// Memo carries user-defined data sent by a node identified by NodeID using
-	// PostMemo. It is defined if Type is SentMemo, and nil otherwise.
-	Memo []byte
-}
-
-// An UpdateType describes the meaning of an Update.
-type UpdateType byte
-
-const (
-	// Joined indicates that a node has joined the network.
-	Joined UpdateType = iota
-
-	// SentMemo indicates that a node has sent a memo.
-	SentMemo
-
-	// Failed indicates that a node has left the network.
-	Failed
 )
 
 // A Node is a network node participating in the SWIM protocol.
@@ -54,23 +22,63 @@ type Node struct {
 
 	id       id // copy of fsm.id
 	conn     *net.UDPConn
-	updates  bufchan.Chan[Update]
 	stopTick chan struct{}
 }
 
 // Start creates a new Node and starts running the SWIM protocol on it.
-func Start() (*Node, error) {
+func Start(
+	handleJoin func(id string, addr netip.AddrPort),
+	handleMemo func(id string, addr netip.AddrPort, memo []byte),
+	handleFail func(id string),
+) (*Node, error) {
 	conn, err := net.ListenUDP("udp", nil)
 	if err != nil {
 		return nil, err
 	}
-	updates := bufchan.Make[Update]()
-	fsm := newStateMachine(updates.Send())
+
+	if handleJoin == nil {
+		handleJoin = func(string, netip.AddrPort) {}
+	}
+	if handleMemo == nil {
+		handleMemo = func(string, netip.AddrPort, []byte) {}
+	}
+	if handleFail == nil {
+		handleFail = func(string) {}
+	}
+
+	wgs := make(map[id]*struct{ join, memo sync.WaitGroup })
+
+	fsm := newStateMachine(
+		func(id id, addr netip.AddrPort) {
+			wg := &struct{ join, memo sync.WaitGroup }{}
+			wgs[id] = wg
+			wg.join.Add(1)
+			go func() {
+				defer wg.join.Done()
+				handleJoin(string(id), addr)
+			}()
+		},
+		func(id id, addr netip.AddrPort, memo []byte) {
+			wg := wgs[id]
+			wg.memo.Add(1)
+			go func() {
+				defer wg.memo.Done()
+				wg.join.Wait()
+				handleMemo(string(id), addr, memo)
+			}()
+		},
+		func(id id) {
+			wg := wgs[id]
+			go func() {
+				wg.memo.Wait()
+				handleFail(string(id))
+			}()
+		},
+	)
 	n := &Node{
 		fsm:      fsm,
 		id:       fsm.id,
 		conn:     conn,
-		updates:  updates,
 		stopTick: make(chan struct{}),
 	}
 	go n.runReceive()
@@ -79,7 +87,6 @@ func Start() (*Node, error) {
 }
 
 func (n *Node) runTick() {
-	defer close(n.updates.Send())
 	periodTimer := time.NewTimer(0)
 	pingTimer := stoppedTimer()
 	for {
@@ -180,12 +187,6 @@ func (n *Node) PostMemo(b []byte) error {
 	defer n.mu.Unlock()
 	n.fsm.addMemo(b)
 	return nil
-}
-
-// Updates returns a channel from which Updates can be received. The channel is
-// closed when n ceases participation in the protocol.
-func (n *Node) Updates() <-chan Update {
-	return n.updates.Receive()
 }
 
 // ID returns n's ID on the network.
