@@ -378,13 +378,10 @@ func (s *stateMachine) failedMessage(id id) *message {
 
 // addMemo adds a new memo carrying b to the memo queue.
 func (s *stateMachine) addMemo(b []byte) {
+	m := s.aliveMessage()
 	memoID := randID()
-	s.memoQueue.Upsert(memoID, &message{
-		Type:        alive,
-		NodeID:      s.id,
-		Incarnation: s.incarnation,
-		MemoID:      memoID,
-		Body:        b,
-	})
+	m.MemoID = memoID
+	m.Body = b
+	s.memoQueue.Upsert(memoID, m)
 	s.seenMemos[memoID] = true
 }
