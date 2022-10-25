@@ -62,7 +62,6 @@ const (
 	alive msgType = iota
 	suspected
 	failed
-	memo
 )
 
 // A message carries membership information or memo data.
@@ -182,7 +181,7 @@ func (s *stateMachine) processMsg(m *message) bool {
 		}
 		return m.Type != failed
 	}
-	if m.Type == memo && !s.seenMemos[m.MemoID] {
+	if len(m.Body) > 0 && !s.seenMemos[m.MemoID] {
 		s.seenMemos[m.MemoID] = true
 		s.memoQueue.Upsert(m.MemoID, m)
 		s.updates <- Update{
@@ -381,7 +380,7 @@ func (s *stateMachine) failedMessage(id id) *message {
 func (s *stateMachine) addMemo(b []byte) {
 	memoID := randID()
 	s.memoQueue.Upsert(memoID, &message{
-		Type:        memo,
+		Type:        alive,
 		NodeID:      s.id,
 		Incarnation: s.incarnation,
 		MemoID:      memoID,
