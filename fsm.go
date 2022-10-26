@@ -62,7 +62,6 @@ const (
 	alive msgType = iota
 	suspected
 	failed
-	memo
 )
 
 // A message carries membership information or memo data.
@@ -175,17 +174,14 @@ func (s *stateMachine) receive(p packet) ([]packet, bool) {
 // processMsg processes a received message and reports whether s can continue
 // participating in the protocol.
 func (s *stateMachine) processMsg(m *message) bool {
-	switch {
-	case m.NodeID == s.id:
+	if m.NodeID == s.id {
 		if m.Type == suspected && m.Incarnation == s.incarnation {
 			s.incarnation++
 			s.msgQueue.Upsert(s.id, s.aliveMessage())
 		}
 		return m.Type != failed
-	case m.Type == memo:
-		if s.seenMemos[m.MemoID] {
-			break
-		}
+	}
+	if len(m.Body) > 0 && !s.seenMemos[m.MemoID] {
 		s.seenMemos[m.MemoID] = true
 		s.memoQueue.Upsert(m.MemoID, m)
 		s.updates <- Update{
@@ -194,7 +190,8 @@ func (s *stateMachine) processMsg(m *message) bool {
 			Addr:   m.Addr,
 			Memo:   m.Body,
 		}
-	case s.isMemberNews(m):
+	}
+	if s.isMemberNews(m) {
 		s.updateStatus(m)
 		s.msgQueue.Upsert(m.NodeID, m)
 	}
@@ -286,9 +283,6 @@ func (s *stateMachine) isSuspect(id id) bool {
 // isMemberNews reports whether m contains new membership status information.
 func (s *stateMachine) isMemberNews(m *message) bool {
 	if m == nil {
-		return false
-	}
-	if m.Type == memo {
 		return false
 	}
 	id := m.NodeID
@@ -384,12 +378,10 @@ func (s *stateMachine) failedMessage(id id) *message {
 
 // addMemo adds a new memo carrying b to the memo queue.
 func (s *stateMachine) addMemo(b []byte) {
+	m := s.aliveMessage()
 	memoID := randID()
-	s.memoQueue.Upsert(memoID, &message{
-		Type:   memo,
-		NodeID: s.id,
-		MemoID: memoID,
-		Body:   b,
-	})
+	m.MemoID = memoID
+	m.Body = b
+	s.memoQueue.Upsert(memoID, m)
 	s.seenMemos[memoID] = true
 }
