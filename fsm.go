@@ -66,12 +66,10 @@ const (
 
 // A message carries membership information or memo data.
 type message struct {
-	Type   msgType
-	NodeID id
-	Addr   netip.AddrPort
-
-	// for alive, suspected, failed
-	Incarnation int `json:",omitempty"`
+	Type        msgType
+	NodeID      id
+	Addr        netip.AddrPort
+	Incarnation int
 
 	// for memo
 	MemoID id     `json:",omitempty"`
@@ -193,7 +191,7 @@ func (s *stateMachine) processMsg(m *message) bool {
 	}
 	if s.isMemberNews(m) {
 		s.updateStatus(m)
-		s.msgQueue.Upsert(m.NodeID, m)
+		s.msgQueue.Upsert(m.NodeID, stripMemo(m))
 	}
 	return true
 }
@@ -384,4 +382,13 @@ func (s *stateMachine) addMemo(b []byte) {
 	m.Body = b
 	s.memoQueue.Upsert(memoID, m)
 	s.seenMemos[memoID] = true
+}
+
+// stripMemo returns a copy of m without its memo data, if any.
+func stripMemo(m *message) *message {
+	n := new(message)
+	*n = *m
+	n.MemoID = ""
+	n.Body = nil
+	return n
 }

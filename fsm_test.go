@@ -1,6 +1,7 @@
 package swim
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -52,6 +53,37 @@ func TestIsMemberNews(t *testing.T) {
 	} {
 		if got := s.isMemberNews(tt.m); got != tt.want {
 			t.Errorf("isNews(%+v): got %v, expected %v", tt.m, got, tt.want)
+		}
+	}
+}
+
+func TestStripMemo(t *testing.T) {
+	for _, tt := range []struct {
+		in, want *message
+	}{
+		{
+			&message{Type: alive, NodeID: "abc", Incarnation: 2},
+			&message{Type: alive, NodeID: "abc", Incarnation: 2},
+		},
+		{
+			&message{
+				Type:        alive,
+				NodeID:      "abc",
+				Incarnation: 2,
+				MemoID:      "123",
+				Body:        []byte("Hello, SWIM!"),
+			},
+			&message{Type: alive, NodeID: "abc", Incarnation: 2},
+		},
+	} {
+		m := new(message)
+		*m = *tt.in
+		got := stripMemo(m)
+		if !reflect.DeepEqual(m, tt.in) {
+			t.Errorf("stripMemo(%v): input modified to %v", tt.in, m)
+		}
+		if !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("stripMemo(%v): got %v, expect %v", tt.in, got, tt.want)
 		}
 	}
 }
