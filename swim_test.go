@@ -8,29 +8,17 @@ import (
 	"kr.dev/diff"
 )
 
-// An update carries network membership information or user-defined data.
 type update struct {
-	// typ describes the meaning of the Update.
-	typ updateType
-
-	// nodeID is the ID of the source node.
+	typ    updateType
 	nodeID string
-
-	// memo carries user-defined data sent by nodeID.
-	memo []byte
+	memo   []byte
 }
 
-// An updateType describes the meaning of an Update.
 type updateType byte
 
 const (
-	// joinedUpdate indicates that a node has joinedUpdate the network.
 	joinedUpdate updateType = iota
-
-	// sentMemoUpdate indicates that a node has sent a memo.
 	sentMemoUpdate
-
-	// failedUpdate indicates that a node has left the network.
 	failedUpdate
 )
 
