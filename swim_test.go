@@ -8,76 +8,75 @@ import (
 	"kr.dev/diff"
 )
 
-// An Update carries network membership information or user-defined data.
-type Update struct {
-	// Type describes the meaning of the Update.
-	Type UpdateType
+// An update carries network membership information or user-defined data.
+type update struct {
+	// typ describes the meaning of the Update.
+	typ updateType
 
-	// NodeID is the ID of the source node.
-	NodeID string
+	// nodeID is the ID of the source node.
+	nodeID string
 
 	// Addr is the address of the source node.
 	Addr netip.AddrPort
 
-	// Memo carries user-defined data sent by a node identified by NodeID using
-	// PostMemo. It is defined if Type is SentMemo, and nil otherwise.
-	Memo []byte
+	// memo carries user-defined data sent by nodeID.
+	memo []byte
 }
 
-// An UpdateType describes the meaning of an Update.
-type UpdateType byte
+// An updateType describes the meaning of an Update.
+type updateType byte
 
 const (
-	// Joined indicates that a node has joined the network.
-	Joined UpdateType = iota
+	// joinedUpdate indicates that a node has joinedUpdate the network.
+	joinedUpdate updateType = iota
 
-	// SentMemo indicates that a node has sent a memo.
-	SentMemo
+	// sentMemoUpdate indicates that a node has sent a memo.
+	sentMemoUpdate
 
-	// Failed indicates that a node has left the network.
-	Failed
+	// failedUpdate indicates that a node has left the network.
+	failedUpdate
 )
 
 func TestDetectJoinAndFail(t *testing.T) {
-	opt := diff.ZeroFields[Update]("Addr")
+	opt := diff.ZeroFields[update]("Addr")
 	nodes, chans := launch(2)
 	addr0 := nodes[0].localAddrPort()
-	update := func(typ UpdateType, n int) Update {
-		return Update{Type: typ, NodeID: string(nodes[n].id)}
+	makeUpdate := func(typ updateType, n int) update {
+		return update{typ: typ, nodeID: string(nodes[n].id)}
 	}
 	nodes[1].Join(addr0)
-	diff.Test(t, t.Errorf, <-chans[0], update(Joined, 1), opt)
-	diff.Test(t, t.Errorf, <-chans[1], update(Joined, 0), opt)
+	diff.Test(t, t.Errorf, <-chans[0], makeUpdate(joinedUpdate, 1), opt)
+	diff.Test(t, t.Errorf, <-chans[1], makeUpdate(joinedUpdate, 0), opt)
 
 	n2, ch2 := launch(1)
 	nodes = append(nodes, n2...)
 	chans = append(chans, ch2...)
 	nodes[2].Join(addr0)
-	diff.Test(t, t.Errorf, <-chans[0], update(Joined, 2), opt)
-	diff.Test(t, t.Errorf, <-chans[1], update(Joined, 2), opt)
+	diff.Test(t, t.Errorf, <-chans[0], makeUpdate(joinedUpdate, 2), opt)
+	diff.Test(t, t.Errorf, <-chans[1], makeUpdate(joinedUpdate, 2), opt)
 
 	// Node 2's updates may arrive in either order
-	updates2 := make(map[id]Update)
+	updates2 := make(map[id]update)
 	for i := 0; i < 2; i++ {
 		u := <-chans[2]
-		updates2[id(u.NodeID)] = u
+		updates2[id(u.nodeID)] = u
 	}
-	want2 := map[id]Update{
-		nodes[0].id: update(Joined, 0),
-		nodes[1].id: update(Joined, 1),
+	want2 := map[id]update{
+		nodes[0].id: makeUpdate(joinedUpdate, 0),
+		nodes[1].id: makeUpdate(joinedUpdate, 1),
 	}
 	diff.Test(t, t.Errorf, updates2, want2, opt)
 
 	nodes[0].conn.Close()
-	diff.Test(t, t.Errorf, <-chans[1], update(Failed, 0), opt)
-	diff.Test(t, t.Errorf, <-chans[2], update(Failed, 0), opt)
+	diff.Test(t, t.Errorf, <-chans[1], makeUpdate(failedUpdate, 0), opt)
+	diff.Test(t, t.Errorf, <-chans[2], makeUpdate(failedUpdate, 0), opt)
 
 	nodes[2].conn.Close()
-	diff.Test(t, t.Errorf, <-chans[1], update(Failed, 2), opt)
+	diff.Test(t, t.Errorf, <-chans[1], makeUpdate(failedUpdate, 2), opt)
 }
 
 func TestPostMemo(t *testing.T) {
-	opt := diff.ZeroFields[Update]("Addr")
+	opt := diff.ZeroFields[update]("Addr")
 	nodes, chans := launch(3)
 	addr0 := nodes[0].localAddrPort()
 	nodes[1].Join(addr0)
@@ -91,30 +90,30 @@ func TestPostMemo(t *testing.T) {
 
 	s := "Hello, SWIM!"
 	nodes[0].PostMemo([]byte(s))
-	u := Update{Type: SentMemo, NodeID: string(nodes[0].id), Memo: []byte(s)}
+	u := update{typ: sentMemoUpdate, nodeID: string(nodes[0].id), memo: []byte(s)}
 	diff.Test(t, t.Errorf, <-chans[1], u, opt)
 	diff.Test(t, t.Errorf, <-chans[2], u, opt)
 	nodes[1].PostMemo([]byte(s))
-	u = Update{Type: SentMemo, NodeID: string(nodes[1].id), Memo: []byte(s)}
+	u = update{typ: sentMemoUpdate, nodeID: string(nodes[1].id), memo: []byte(s)}
 	diff.Test(t, t.Errorf, <-chans[0], u, opt)
 	diff.Test(t, t.Errorf, <-chans[2], u, opt)
 }
 
-func launch(n int) ([]*Node, []chan Update) {
+func launch(n int) ([]*Node, []chan update) {
 	nodes := make([]*Node, n)
-	chans := make([]chan Update, n)
+	chans := make([]chan update, n)
 	for i := range nodes {
 		i := i
-		chans[i] = make(chan Update)
+		chans[i] = make(chan update)
 		node, err := Start(
 			func(id string, addr netip.AddrPort) {
-				chans[i] <- Update{Type: Joined, NodeID: id, Addr: addr}
+				chans[i] <- update{typ: joinedUpdate, nodeID: id, Addr: addr}
 			},
 			func(id string, addr netip.AddrPort, memo []byte) {
-				chans[i] <- Update{Type: SentMemo, NodeID: id, Addr: addr, Memo: memo}
+				chans[i] <- update{typ: sentMemoUpdate, nodeID: id, Addr: addr, memo: memo}
 			},
 			func(id string) {
-				chans[i] <- Update{Type: Failed, NodeID: id}
+				chans[i] <- update{typ: failedUpdate, nodeID: id}
 			},
 		)
 		if err != nil {
