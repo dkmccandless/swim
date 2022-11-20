@@ -58,6 +58,35 @@ func TestOnJoin(t *testing.T) {
 	diff.Test(t, t.Errorf, (<-met2).id, n2.ID())
 }
 
+func TestHandlerOrder(t *testing.T) {
+	n, err := Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan updateType)
+	n.OnFail(func(string) { ch <- failedUpdate })
+	n.OnJoin(func(string, netip.AddrPort) { ch <- joinedUpdate })
+	n.OnMemo(func(string, netip.AddrPort, []byte) { ch <- sentMemoUpdate })
+
+	// n receives a memo from an unknown source
+	n.receive(packet{
+		Type:     ping,
+		remoteID: "XYZ",
+		Msgs: []*message{
+			{
+				Type:   alive,
+				NodeID: "XYZ",
+				MemoID: "123",
+				Body:   []byte("Hello, SWIM!"),
+			},
+		},
+	})
+
+	diff.Test(t, t.Errorf, <-ch, joinedUpdate)
+	diff.Test(t, t.Errorf, <-ch, sentMemoUpdate)
+	diff.Test(t, t.Errorf, <-ch, failedUpdate)
+}
+
 func TestDetectJoinAndFail(t *testing.T) {
 	nodes, chans := launch(2)
 	addr0 := nodes[0].localAddrPort()

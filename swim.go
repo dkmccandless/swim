@@ -77,25 +77,28 @@ func Start() (*Node, error) {
 	return n, nil
 }
 
-// OnJoin instructs n to call f when a node joins the network.
-func (n *Node) OnJoin(f func(id string, addr netip.AddrPort)) {
+// OnJoin instructs n to call handleJoin when a node joins the network.
+func (n *Node) OnJoin(handleJoin func(nodeID string, addr netip.AddrPort)) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.handleJoin = f
+	n.handleJoin = handleJoin
 }
 
-// OnMemo instructs n to call f when a node sends a memo.
-func (n *Node) OnMemo(f func(id string, addr netip.AddrPort, memo []byte)) {
+// OnMemo instructs n to call handleMemo when another member of the network
+// sends a memo. For each nodeID, calls to handleMemo are not ordered with
+// respect to each other, but they all happen after the corresponding call to
+// handleJoin and before the call to handleFail.
+func (n *Node) OnMemo(handleMemo func(nodeID string, addr netip.AddrPort, memo []byte)) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.handleMemo = f
+	n.handleMemo = handleMemo
 }
 
-// OnFail instructs n to call f when a node leaves the network.
-func (n *Node) OnFail(f func(id string)) {
+// OnFail instructs n to call handleFail when a node leaves the network.
+func (n *Node) OnFail(handleFail func(nodeID string)) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.handleFail = f
+	n.handleFail = handleFail
 }
 
 func (n *Node) runTick() {
@@ -148,6 +151,11 @@ func (n *Node) send(ps []packet) {
 			return
 		}
 	}
+}
+
+type envelope struct {
+	SrcID id
+	P     packet
 }
 
 // writeTo writes p to addr.
@@ -209,11 +217,6 @@ func (n *Node) ID() string {
 // LocalAddr returns the local network address.
 func (n *Node) LocalAddr() netip.AddrPort {
 	return n.conn.LocalAddr().(*net.UDPAddr).AddrPort()
-}
-
-type envelope struct {
-	SrcID id
-	P     packet
 }
 
 func stoppedTimer() *time.Timer {

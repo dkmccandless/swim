@@ -222,7 +222,7 @@ func (s *stateMachine) updateStatus(m *message) {
 	}
 }
 
-// remove removes an id from the list and calls handleFailed if it was a member.
+// remove removes an id from the list and calls handleFail if it was a member.
 func (s *stateMachine) remove(id id) {
 	if !s.isMember(id) {
 		return
