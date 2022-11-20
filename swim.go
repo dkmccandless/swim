@@ -17,16 +17,15 @@ const (
 
 // A Node is a network node participating in the SWIM protocol.
 type Node struct {
-	mu  sync.Mutex // protects the following field
-	fsm *stateMachine
+	mu         sync.Mutex // protects the following fields
+	fsm        *stateMachine
+	handleJoin func(id string, addr netip.AddrPort)
+	handleMemo func(id string, addr netip.AddrPort, memo []byte)
+	handleFail func(id string)
 
 	id       id // copy of fsm.id
 	conn     *net.UDPConn
 	stopTick chan struct{}
-
-	handleJoin func(id string, addr netip.AddrPort)
-	handleMemo func(id string, addr netip.AddrPort, memo []byte)
-	handleFail func(id string)
 }
 
 // Start creates a new Node and starts running the SWIM protocol on it.
@@ -36,12 +35,12 @@ func Start() (*Node, error) {
 		return nil, err
 	}
 	n := &Node{
-		conn:     conn,
-		stopTick: make(chan struct{}),
-
 		handleJoin: func(string, netip.AddrPort) {},
 		handleMemo: func(string, netip.AddrPort, []byte) {},
 		handleFail: func(string) {},
+
+		conn:     conn,
+		stopTick: make(chan struct{}),
 	}
 
 	wgs := make(map[id]*struct{ join, memo sync.WaitGroup })
@@ -80,16 +79,22 @@ func Start() (*Node, error) {
 
 // OnJoin instructs n to call f when a node joins the network.
 func (n *Node) OnJoin(f func(id string, addr netip.AddrPort)) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	n.handleJoin = f
 }
 
 // OnMemo instructs n to call f when a node sends a memo.
 func (n *Node) OnMemo(f func(id string, addr netip.AddrPort, memo []byte)) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	n.handleMemo = f
 }
 
 // OnFail instructs n to call f when a node leaves the network.
 func (n *Node) OnFail(f func(id string)) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	n.handleFail = f
 }
 
