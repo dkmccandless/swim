@@ -227,11 +227,11 @@ func (s *stateMachine) remove(id id) {
 	if !s.isMember(id) {
 		return
 	}
-	s.handleFail(id)
 	delete(s.members, id)
 	delete(s.suspects, id)
 	s.removed[id] = true
 	s.order.Remove(id)
+	s.handleFail(id)
 }
 
 // processPacketType processes an incoming packet and returns any necessary

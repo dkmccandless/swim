@@ -65,6 +65,7 @@ func Start() (*Node, error) {
 		},
 		func(id id) {
 			wg := wgs[id]
+			delete(wgs, id)
 			go func() {
 				wg.memo.Wait()
 				n.handleFail(string(id))
