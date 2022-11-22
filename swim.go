@@ -78,28 +78,29 @@ func Start() (*Node, error) {
 	return n, nil
 }
 
-// OnJoin instructs n to call handleJoin when a node joins the network.
-func (n *Node) OnJoin(handleJoin func(nodeID string, addr netip.AddrPort)) {
+// OnJoin uses f as n's join handler, to be called when a peer joins the
+// network.
+func (n *Node) OnJoin(f func(nodeID string, addr netip.AddrPort)) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.handleJoin = handleJoin
+	n.handleJoin = f
 }
 
-// OnMemo instructs n to call handleMemo when another member of the network
-// sends a memo. For each nodeID, calls to handleMemo are not ordered with
-// respect to each other, but they all happen after the corresponding call to
-// handleJoin and before the call to handleFail.
-func (n *Node) OnMemo(handleMemo func(nodeID string, addr netip.AddrPort, memo []byte)) {
+// OnMemo uses f as n's memo handler, to be called when n receives a memo.
+// For each peer, calls to f happen after the join handler (if any) returns.
+func (n *Node) OnMemo(f func(nodeID string, addr netip.AddrPort, memo []byte)) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.handleMemo = handleMemo
+	n.handleMemo = f
 }
 
-// OnFail instructs n to call handleFail when a node leaves the network.
-func (n *Node) OnFail(handleFail func(nodeID string)) {
+// OnFail uses f as n's failure handler, to be called when a peer leaves the
+// network. For each peer, the call to f happens after the memo handlers (if
+// any) return.
+func (n *Node) OnFail(f func(nodeID string)) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.handleFail = handleFail
+	n.handleFail = f
 }
 
 func (n *Node) runTick() {
