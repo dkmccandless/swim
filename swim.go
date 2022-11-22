@@ -95,8 +95,8 @@ func (n *Node) OnMemo(f func(nodeID string, addr netip.AddrPort, memo []byte)) {
 }
 
 // OnFail uses f as n's failure handler, to be called when a peer leaves the
-// network. For each peer, the call to f happens after the memo handlers (if
-// any) return.
+// network. For each peer, the call to f happens after all calls to the memo
+// handler (if any) return.
 func (n *Node) OnFail(f func(nodeID string)) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
