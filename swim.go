@@ -154,11 +154,6 @@ func (n *Node) send(ps []packet) {
 	}
 }
 
-type envelope struct {
-	SrcID id
-	P     packet
-}
-
 // writeTo writes p to addr.
 func (n *Node) writeTo(p packet, addr netip.AddrPort) error {
 	b, err := json.Marshal(envelope{n.id, p})
@@ -218,6 +213,11 @@ func (n *Node) ID() string {
 // LocalAddr returns the local network address.
 func (n *Node) LocalAddr() netip.AddrPort {
 	return n.conn.LocalAddr().(*net.UDPAddr).AddrPort()
+}
+
+type envelope struct {
+	SrcID id
+	P     packet
 }
 
 func stoppedTimer() *time.Timer {
