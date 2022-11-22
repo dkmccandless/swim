@@ -148,20 +148,20 @@ func launch(n int) ([]*Node, []chan update) {
 	nodes := make([]*Node, n)
 	chans := make([]chan update, n)
 	for i := range nodes {
-		i := i
-		chans[i] = make(chan update)
+		ch := make(chan update)
+		chans[i] = ch
 		n, err := Start()
 		if err != nil {
 			panic(err)
 		}
 		n.OnJoin(func(id string, _ netip.AddrPort) {
-			chans[i] <- update{typ: joinedUpdate, nodeID: id}
+			ch <- update{typ: joinedUpdate, nodeID: id}
 		})
 		n.OnMemo(func(id string, _ netip.AddrPort, memo []byte) {
-			chans[i] <- update{typ: sentMemoUpdate, nodeID: id, memo: memo}
+			ch <- update{typ: sentMemoUpdate, nodeID: id, memo: memo}
 		})
 		n.OnFail(func(id string) {
-			chans[i] <- update{typ: failedUpdate, nodeID: id}
+			ch <- update{typ: failedUpdate, nodeID: id}
 		})
 		nodes[i] = n
 	}
