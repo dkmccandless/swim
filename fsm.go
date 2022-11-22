@@ -30,7 +30,9 @@ type stateMachine struct {
 	nPingReqs int
 	maxMsgs   int
 
-	updates chan<- Update
+	handleJoin func(id, netip.AddrPort)
+	handleMemo func(id, netip.AddrPort, []byte)
+	handleFail func(id)
 }
 
 // A packetType describes the meaning of a packet.
@@ -83,9 +85,13 @@ type profile struct {
 	addr        netip.AddrPort
 }
 
-// newStateMachine initializes a new stateMachine emitting Updates on the
-// provided channel, which must never block.
-func newStateMachine(updates chan<- Update) *stateMachine {
+// newStateMachine initializes a new stateMachine emitting membership
+// information and memos via the provided handler callbacks.
+func newStateMachine(
+	handleJoin func(id, netip.AddrPort),
+	handleMemo func(id, netip.AddrPort, []byte),
+	handleFail func(id),
+) *stateMachine {
 	s := &stateMachine{
 		id: randID(),
 
@@ -99,7 +105,9 @@ func newStateMachine(updates chan<- Update) *stateMachine {
 		nPingReqs: 2, // TODO: scale according to permissible false positive probability
 		maxMsgs:   6, // TODO: revisit guaranteed MTU constraint
 
-		updates: updates,
+		handleJoin: handleJoin,
+		handleMemo: handleMemo,
+		handleFail: handleFail,
 	}
 
 	s.msgQueue = rpq.New[id, *message](s.disseminationFactor)
@@ -179,25 +187,20 @@ func (s *stateMachine) processMsg(m *message) bool {
 		}
 		return m.Type != failed
 	}
-	if len(m.Body) > 0 && !s.seenMemos[m.MemoID] {
-		s.seenMemos[m.MemoID] = true
-		s.memoQueue.Upsert(m.MemoID, m)
-		s.updates <- Update{
-			Type:   SentMemo,
-			NodeID: string(m.NodeID),
-			Addr:   m.Addr,
-			Memo:   m.Body,
-		}
-	}
 	if s.isMemberNews(m) {
 		s.updateStatus(m)
 		s.msgQueue.Upsert(m.NodeID, stripMemo(m))
+	}
+	if len(m.Body) > 0 && !s.seenMemos[m.MemoID] && s.isMember(m.NodeID) {
+		s.seenMemos[m.MemoID] = true
+		s.memoQueue.Upsert(m.MemoID, m)
+		s.handleMemo(m.NodeID, m.Addr, m.Body)
 	}
 	return true
 }
 
 // updateStatus updates a node's membership status based on a received message
-// and emits an Update if the membership list changed.
+// and calls a handler if the membership list changed.
 func (s *stateMachine) updateStatus(m *message) {
 	id := m.NodeID
 	if m.Type == failed {
@@ -207,7 +210,7 @@ func (s *stateMachine) updateStatus(m *message) {
 	if !s.isMember(id) {
 		s.members[id] = new(profile)
 		s.order.Add(id)
-		s.updates <- Update{Type: Joined, NodeID: string(id), Addr: m.Addr}
+		s.handleJoin(id, m.Addr)
 	}
 	s.members[id].incarnation = m.Incarnation
 	s.members[id].addr = m.Addr
@@ -219,16 +222,16 @@ func (s *stateMachine) updateStatus(m *message) {
 	}
 }
 
-// remove removes an id from the list and emits an Update if it was a member.
+// remove removes an id from the list and calls handleFail if it was a member.
 func (s *stateMachine) remove(id id) {
 	if !s.isMember(id) {
 		return
 	}
-	s.updates <- Update{Type: Failed, NodeID: string(id), Addr: s.members[id].addr}
 	delete(s.members, id)
 	delete(s.suspects, id)
 	s.removed[id] = true
 	s.order.Remove(id)
+	s.handleFail(id)
 }
 
 // processPacketType processes an incoming packet and returns any necessary
