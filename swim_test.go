@@ -23,7 +23,7 @@ const (
 )
 
 func TestOnJoin(t *testing.T) {
-	n0, err := Start()
+	n0, err := Start("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestOnJoin(t *testing.T) {
 		met1 <- id
 	})
 
-	n1, err := Start()
+	n1, err := Start("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestOnJoin(t *testing.T) {
 		met2 <- record{id, true}
 	})
 
-	n2, err := Start()
+	n2, err := Start("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestOnJoin(t *testing.T) {
 }
 
 func TestHandlerOrder(t *testing.T) {
-	n, err := Start()
+	n, err := Start("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func launch(n int) ([]*Node, []chan update) {
 	for i := range nodes {
 		ch := make(chan update)
 		chans[i] = ch
-		n, err := Start()
+		n, err := Start("")
 		if err != nil {
 			panic(err)
 		}

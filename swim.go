@@ -28,9 +28,18 @@ type Node struct {
 	stopTick chan struct{}
 }
 
-// Start creates a new Node and starts running the SWIM protocol on it.
-func Start() (*Node, error) {
-	conn, err := net.ListenUDP("udp", nil)
+// Start creates a new Node listening on the local UDP address.
+//
+// If the address's host is empty or a literal unspecified IP address, the
+// Node listens on all available IP addresses of the local system except
+// multicast IP addresses. If the port is empty or "0", as in "127.0.0.1:"
+// or "[::1]:0", a port number is automatically chosen.
+func Start(address string) (*Node, error) {
+	addr, err := net.ResolveUDPAddr("udp", address)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		return nil, err
 	}
